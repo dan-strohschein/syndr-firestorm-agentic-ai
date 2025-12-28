@@ -1,0 +1,291 @@
+# firestorm/conductor/data_seeder.py
+import random
+import logging
+import json
+from datetime import datetime, timedelta
+from faker import Faker
+
+logger = logging.getLogger(__name__)
+
+class DataSeeder:
+    """Seeds test data into SyndrDB using Faker for realistic data"""
+    
+    def __init__(self, db_client):
+        self.db = db_client
+        self.faker = Faker()
+        
+        # Product categories for e-commerce
+        self.categories = [
+            "Electronics", "Computers", "Smartphones", "Audio",
+            "Clothing", "Shoes", "Accessories", "Jewelry",
+            "Home & Garden", "Furniture", "Kitchen", "Bedding",
+            "Books", "Movies", "Music", "Games",
+            "Toys", "Baby", "Kids", "Education",
+            "Sports", "Outdoors", "Fitness", "Cycling",
+            "Beauty", "Health", "Personal Care", "Vitamins"
+        ]
+        
+        # Order statuses
+        self.order_statuses = ["pending", "processing", "shipped", "delivered", "cancelled"]
+        
+        # Store parent DocumentIDs for foreign key relationships
+        self.user_doc_ids = []
+        self.product_doc_ids = []
+        self.order_doc_ids = []
+    
+    def seed_users(self, count: int):
+        """Seed user accounts and capture their DocumentIDs for foreign key relationships"""
+        logger.info(f"Seeding {count} users...")
+        
+        # Clear existing user IDs if reseeding
+        if len(self.user_doc_ids) > 1000:
+            self.user_doc_ids = self.user_doc_ids[-100:]
+        
+        batch_size = 100
+        for i in range(0, count, batch_size):
+            batch = min(batch_size, count - i)
+            self._seed_users_batch(batch)
+        
+        logger.info(f"✓ Seeded {count} users. Tracking {len(self.user_doc_ids)} DocumentIDs for relationships")
+    
+    def _seed_users_batch(self, count: int):
+        """Seed a batch of users with realistic data from Faker"""
+        for i in range(count):
+            name = self.faker.name()
+            # Generate unique email based on name
+            email = self.faker.email()
+            created = self.faker.date_time_between(start_date='-2y', end_date='now').isoformat()
+            last_login = self.faker.date_time_between(start_date='-30d', end_date='now').isoformat()
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "users"
+                       WITH (
+                           {{"name" = "{name}"}},
+                           {{"email" = "{email}"}},
+                           {{"created_at" = "{created}"}},
+                           {{"last_login" = "{last_login}"}}
+                       );'''
+            
+            result = self.db.execute(query)
+            
+            # Capture DocumentID from successful insert
+            try:
+                # Result is nested: result['result']['Result']
+                result_obj = result.get("result", {})
+                result_str = result_obj.get("Result", "{}")
+                if result_str:
+                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
+                    doc_id = result_data.get("DocumentID")
+                    if doc_id:
+                        # Keep a rolling window of ~20 recent user IDs for foreign keys
+                        self.user_doc_ids.append(doc_id)
+                        if len(self.user_doc_ids) > 20:
+                            self.user_doc_ids.pop(0)
+            except Exception as e:
+                logger.warning(f"Failed to extract DocumentID from user insert: {e}")
+    
+    def seed_products(self, count: int):
+        """Seed products with realistic names and data from Faker"""
+        logger.info(f"Seeding {count} products...")
+        
+        # Clear existing product IDs if reseeding
+        if len(self.product_doc_ids) > 1000:
+            self.product_doc_ids = self.product_doc_ids[-100:]
+        
+        for i in range(count):
+            # Generate realistic product names
+            name = self.faker.catch_phrase()
+            price = round(random.uniform(5.0, 2000.0), 2)
+            category = random.choice(self.categories)
+            stock = random.randint(0, 500)
+            rating = round(random.uniform(1.0, 5.0), 1)
+            created = self.faker.date_time_between(start_date='-2y', end_date='now').isoformat()
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "products"
+                       WITH (
+                           {{"name" = "{name}"}},
+                           {{"price" = {price}}},
+                           {{"category" = "{category}"}},
+                           {{"stock" = {stock}}},
+                           {{"rating" = {rating}}},
+                           {{"created_at" = "{created}"}}
+                       );'''
+            
+            result = self.db.execute(query)
+            
+            # Capture DocumentID from successful insert
+            try:
+                # Result is nested: result['result']['Result']
+                result_obj = result.get("result", {})
+                result_str = result_obj.get("Result", "{}")
+                if result_str:
+                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
+                    doc_id = result_data.get("DocumentID")
+                    if doc_id:
+                        # Keep a rolling window of ~20 recent product IDs for foreign keys
+                        self.product_doc_ids.append(doc_id)
+                        if len(self.product_doc_ids) > 20:
+                            self.product_doc_ids.pop(0)
+            except Exception as e:
+                logger.warning(f"Failed to extract DocumentID from product insert: {e}")
+        
+        logger.info(f"✓ Seeded {count} products. Tracking {len(self.product_doc_ids)} DocumentIDs for relationships")
+    
+    def seed_orders(self, count: int):
+        """Seed historical orders using real user DocumentIDs from relationships"""
+        logger.info(f"Seeding {count} orders...")
+        
+        if not self.user_doc_ids:
+            logger.warning("No user DocumentIDs available! Seeding users first...")
+            self.seed_users(count=20)
+        
+        # Clear existing order IDs if reseeding
+        if len(self.order_doc_ids) > 1000:
+            self.order_doc_ids = self.order_doc_ids[-100:]
+        
+        for i in range(count):
+            # Use a real user DocumentID from the relationship
+            user_id = random.choice(self.user_doc_ids)
+            total = round(random.uniform(10.0, 500.0), 2)
+            status = random.choice(self.order_statuses)
+            created = self.faker.date_time_between(start_date='-1y', end_date='now').isoformat()
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "orders"
+                       WITH (
+                           {{"user_id" = "{user_id}"}},
+                           {{"total" = {total}}},
+                           {{"status" = "{status}"}},
+                           {{"created_at" = "{created}"}}
+                       );'''
+            
+            result = self.db.execute(query)
+            
+            # Capture DocumentID for order_items relationship
+            try:
+                # Result is nested: result['result']['Result']
+                result_obj = result.get("result", {})
+                result_str = result_obj.get("Result", "{}")
+                if result_str:
+                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
+                    doc_id = result_data.get("DocumentID")
+                    if doc_id:
+                        # Keep a rolling window of ~20 recent order IDs for order_items
+                        self.order_doc_ids.append(doc_id)
+                        if len(self.order_doc_ids) > 20:
+                            self.order_doc_ids.pop(0)
+            except Exception as e:
+                logger.warning(f"Failed to extract DocumentID from order insert: {e}")
+        
+        logger.info(f"✓ Seeded {count} orders. Tracking {len(self.order_doc_ids)} DocumentIDs for relationships")
+    
+    def seed_reviews(self, count: int):
+        """Seed product reviews using real user and product DocumentIDs from relationships"""
+        logger.info(f"Seeding {count} reviews...")
+        
+        if not self.user_doc_ids:
+            logger.warning("No user DocumentIDs available! Seeding users first...")
+            self.seed_users(count=20)
+        
+        if not self.product_doc_ids:
+            logger.warning("No product DocumentIDs available! Seeding products first...")
+            self.seed_products(count=20)
+        
+        for i in range(count):
+            # Use real DocumentIDs from relationships
+            user_id = random.choice(self.user_doc_ids)
+            product_id = random.choice(self.product_doc_ids)
+            rating = random.randint(1, 5)
+            # Generate realistic review text based on rating
+            if rating >= 4:
+                comment = self.faker.sentence(nb_words=random.randint(5, 15))
+            elif rating == 3:
+                comment = self.faker.sentence(nb_words=random.randint(5, 12))
+            else:
+                comment = self.faker.sentence(nb_words=random.randint(4, 10))
+            
+            created = self.faker.date_time_between(start_date='-1y', end_date='now').isoformat()
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "reviews"
+                       WITH (
+                           {{"user_id" = "{user_id}"}},
+                           {{"product_id" = "{product_id}"}},
+                           {{"rating" = {rating}}},
+                           {{"comment" = "{comment}"}},
+                           {{"created_at" = "{created}"}}
+                       );'''
+            
+            self.db.execute(query)
+        
+        logger.info(f"✓ Seeded {count} reviews")
+    
+    def seed_order_items(self, count: int):
+        """Seed order items using real order and product DocumentIDs from relationships"""
+        logger.info(f"Seeding {count} order items...")
+        
+        if not self.order_doc_ids:
+            logger.warning("No order DocumentIDs available! Seeding orders first...")
+            self.seed_orders(count=20)
+        
+        if not self.product_doc_ids:
+            logger.warning("No product DocumentIDs available! Seeding products first...")
+            self.seed_products(count=20)
+        
+        for i in range(count):
+            # Use real DocumentIDs from relationships
+            order_id = random.choice(self.order_doc_ids)
+            product_id = random.choice(self.product_doc_ids)
+            quantity = random.randint(1, 5)
+            price = round(random.uniform(5.0, 500.0), 2)
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "order_items"
+                       WITH (
+                           {{"order_id" = "{order_id}"}},
+                           {{"product_id" = "{product_id}"}},
+                           {{"quantity" = {quantity}}},
+                           {{"price" = {price}}}
+                       );'''
+            
+            self.db.execute(query)
+        
+        logger.info(f"✓ Seeded {count} order items")
+    
+    def seed_cart_items(self, count: int):
+        """Seed cart items using real user and product DocumentIDs from relationships"""
+        logger.info(f"Seeding {count} cart items...")
+        
+        if not self.user_doc_ids:
+            logger.warning("No user DocumentIDs available! Seeding users first...")
+            self.seed_users(count=20)
+        
+        if not self.product_doc_ids:
+            logger.warning("No product DocumentIDs available! Seeding products first...")
+            self.seed_products(count=20)
+        
+        for i in range(count):
+            # Use real DocumentIDs from relationships
+            user_id = random.choice(self.user_doc_ids)
+            product_id = random.choice(self.product_doc_ids)
+            quantity = random.randint(1, 3)
+            
+            query = f'''ADD DOCUMENT TO BUNDLE "cart_items"
+                       WITH (
+                           {{"user_id" = "{user_id}"}},
+                           {{"product_id" = "{product_id}"}},
+                           {{"quantity" = {quantity}}}
+                       );'''
+            
+            self.db.execute(query)
+        
+        logger.info(f"✓ Seeded {count} cart items")
+    
+    def get_document_ids(self) -> dict:
+        """
+        Return captured DocumentIDs for use in query generation.
+        
+        Returns:
+            Dict with user_document_ids, product_document_ids, order_document_ids
+        """
+        return {
+            "user_document_ids": self.user_doc_ids.copy(),
+            "product_document_ids": self.product_doc_ids.copy(),
+            "order_document_ids": self.order_doc_ids.copy()
+        }

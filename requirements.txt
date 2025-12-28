@@ -1,0 +1,16 @@
+# Syndr Firestorm - Python Dependencies
+
+# Core dependencies
+requests>=2.31.0
+pyyaml>=6.0.1
+faker>=28.0.0
+
+# Logging with colors
+colorlog>=6.8.0
+
+# Type checking (optional, for development)
+# mypy>=1.7.0
+
+# Testing (optional)
+# pytest>=7.4.0
+# pytest-cov>=4.1.0

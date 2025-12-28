@@ -1,0 +1,206 @@
+import requests
+import json
+import time
+import logging
+import random
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+logger = logging.getLogger(__name__)
+from tools.syndrdb_client import SyndrDBClient
+
+class BaseAgent:
+    """Base class for all agents using Ollama and SyndrDB"""
+    
+    def __init__(
+        self,
+        agent_id: str,
+        persona_name: str,
+        syndrdb_host: str = "127.0.0.1",
+        syndrdb_port: int = 1776,
+        syndrdb_database: str = "primary",
+        ollama_url: str = "http://localhost:11434"
+    ):
+        self.agent_id = agent_id
+        self.persona_name = persona_name
+        self.ollama_url = ollama_url
+        # Use connection string format with credentials
+        conn_str = f"syndrdb://{syndrdb_host}:{syndrdb_port}:{syndrdb_database}:root:root"
+        self.db_client = SyndrDBClient(conn_str)
+        
+        # Metrics
+        self.queries_executed = 0
+        self.successful_queries = 0
+        self.failed_queries = 0
+        self.total_latency = 0
+        self.errors = []
+
+        # Session state
+        self.session_memory = []  # Remember past actions
+        self.current_context = {}
+        
+        # Pre-generated queries and execution results
+        self.pregenerated_queries: List[str] = []
+        self.execution_results: List[Dict[str, Any]] = []
+        
+    def _call_ollama(self, prompt: str, system_prompt: str) -> str:
+        """Call Ollama API for agent decision-making"""
+        
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": "llama3.2:1b",
+                    "prompt": prompt,
+                    "system": system_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.7,
+                        "top_p": 0.9,
+                        "max_tokens": 500
+                    }
+                },
+                timeout=30
+            )
+
+            # check for HTTP errors
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("response", "")
+            else:
+                logger.error(f"Ollama API error: {response.status_code}")
+                return ""
+            
+        except Exception as e:
+            logger.error(f"Ollama call failed: {e}")
+            return ""
+    
+    def _execute_query(self, query: str) -> Dict[str, Any]:
+        """Execute query and track metrics"""
+        
+        self.queries_executed += 1
+        
+        # Log which persona is executing which query
+        logger.info(f"[{self.agent_id}] ({self.persona_name}) EXECUTING: {query[:200]}{'...' if len(query) > 200 else ''}")
+        
+        result = self.db_client.execute(query)
+        
+        if result.get("success"):
+            self.successful_queries += 1
+            self.total_latency += result.get("latency_ms", 0)
+            logger.info(f"[{self.agent_id}] ({self.persona_name}) ✓ Success - {result.get('latency_ms', 0):.2f}ms")
+        else:
+            self.failed_queries += 1
+            self.errors.append({
+                "query": query,
+                "error": result.get("error"),
+                "timestamp": time.time()
+            })
+            logger.error(f"[{self.agent_id}] ({self.persona_name}) ✗ Failed: {result.get('error', 'Unknown error')}")
+        
+        return result
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Return agent metrics"""
+        avg_latency = (
+            self.total_latency / self.successful_queries 
+            if self.successful_queries > 0 
+            else 0
+        )
+        
+        return {
+            "agent_id": self.agent_id,
+            "persona":  self.persona_name,
+            "queries_executed": self.queries_executed,
+            "successful_queries": self.successful_queries,
+            "failed_queries": self.failed_queries,
+            "success_rate": (
+                self.successful_queries / self.queries_executed 
+                if self.queries_executed > 0 
+                else 0
+            ),
+            "avg_latency_ms": avg_latency,
+            "error_count": len(self.errors)
+        }
+    
+    def start_session(self):
+        """Start agent session"""
+        self.db_client.connect()
+        logger.info(f"[{self.agent_id}] Session started as {self.persona_name}")
+    
+    def end_session(self):
+        """End agent session"""
+        self.db_client.disconnect()
+        metrics = self.get_metrics()
+        logger.info(f"[{self.agent_id}] Session ended. Metrics: {metrics}")
+    
+    def run_pregenerated_session(self, think_time_range: tuple = (1, 3)):
+        """
+        Run session using pre-generated queries.
+        
+        This method replaces the standard run_session when queries are pre-generated.
+        It executes each query in sequence, tracking detailed metrics.
+        
+        Args:
+            think_time_range: Tuple of (min, max) seconds to wait between queries
+        """
+        if not self.pregenerated_queries:
+            logger.error(f"[{self.agent_id}] No pre-generated queries available!")
+            return
+        
+        logger.info(
+            f"[{self.agent_id}] ({self.persona_name}) Starting pre-generated session "
+            f"with {len(self.pregenerated_queries)} queries"
+        )
+        
+        self.start_session()
+        session_start_time = time.time()
+        
+        # Execute each pre-generated query
+        for idx, query in enumerate(self.pregenerated_queries):
+            # Timestamp before sending
+            timestamp_sent = datetime.now().isoformat()
+            time_sent = time.time()
+            
+            # Execute query
+            result = self._execute_query(query)
+            
+            # Timestamp after receiving
+            timestamp_received = datetime.now().isoformat()
+            time_received = time.time()
+            elapsed_ms = (time_received - time_sent) * 1000
+            
+            # Extract row count if available
+            row_count = 0
+            if result.get("success"):
+                result_data = result.get("result", {})
+                result_array = result_data.get("Result", [])
+                if isinstance(result_array, list):
+                    row_count = len(result_array)
+            
+            # Store detailed execution result
+            execution_detail = {
+                "query_index": idx + 1,
+                "timestamp_sent": timestamp_sent,
+                "timestamp_received": timestamp_received,
+                "elapsed_ms": round(elapsed_ms, 2),
+                "statement": query,
+                "status": "success" if result.get("success") else "error",
+                "error_message": result.get("error", "") if not result.get("success") else "",
+                "row_count": row_count
+            }
+            
+            self.execution_results.append(execution_detail)
+            
+            # Think time between queries (except for last one)
+            if idx < len(self.pregenerated_queries) - 1:
+                think_time = random.uniform(*think_time_range)
+                time.sleep(think_time)
+        
+        session_duration = time.time() - session_start_time
+        
+        self.end_session()
+        
+        logger.info(
+            f"[{self.agent_id}] ({self.persona_name}) Pre-generated session complete. "
+            f"Executed {len(self.pregenerated_queries)} queries in {session_duration:.1f}s"
+        )

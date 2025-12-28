@@ -1,0 +1,97 @@
+# Syndr Firestorm - Test Scenarios Configuration
+
+# Quick Test - Fast validation
+quick_test:
+  name: "Quick Test"
+  description: "Fast validation test for debugging"
+  agents: 5
+  duration_minutes: 2
+  distribution:
+    casual_browser: 3
+    power_user: 1
+    admin: 1
+    analyst: 0
+  
+# Standard Test - Default configuration
+standard:
+  name: "Standard Load Test"
+  description: "Standard 20-agent load test simulating typical user patterns"
+  agents: 20
+  duration_minutes: 30
+  distribution:
+    casual_browser: 10
+    power_user: 6
+    admin: 2
+    analyst: 2
+
+# Stress Test - High load
+stress:
+  name: "Stress Test"
+  description: "High concurrency stress test with 50 agents"
+  agents: 50
+  duration_minutes: 60
+  distribution:
+    casual_browser: 25
+    power_user: 15
+    admin: 5
+    analyst: 5
+
+# Endurance Test - Long duration
+endurance:
+  name: "Endurance Test"
+  description: "Long-running test to validate stability over time"
+  agents: 20
+  duration_minutes: 240  # 4 hours
+  distribution:
+    casual_browser: 10
+    power_user: 6
+    admin: 2
+    analyst: 2
+
+# Peak Load Test - Simulated traffic spike
+peak_load:
+  name: "Peak Load Test"
+  description: "Simulated peak traffic with heavy read operations"
+  agents: 100
+  duration_minutes: 30
+  distribution:
+    casual_browser: 60
+    power_user: 30
+    admin: 5
+    analyst: 5
+
+# Admin Heavy Test - Bulk operations focus
+admin_heavy:
+  name: "Admin Heavy Test"
+  description: "Focus on bulk operations and writes"
+  agents: 20
+  duration_minutes: 30
+  distribution:
+    casual_browser: 5
+    power_user: 5
+    admin: 8
+    analyst: 2
+
+# Analyst Heavy Test - Complex query focus
+analyst_heavy:
+  name: "Analyst Heavy Test"
+  description: "Focus on complex analytical queries and JOINs"
+  agents: 10
+  duration_minutes: 60
+  distribution:
+    casual_browser: 2
+    power_user: 2
+    admin: 1
+    analyst: 5
+
+# Minimal Test - Single agent debugging
+minimal:
+  name: "Minimal Test"
+  description: "Single agent for detailed debugging"
+  agents: 1
+  duration_minutes: 1
+  distribution:
+    casual_browser: 1
+    power_user: 0
+    admin: 0
+    analyst: 0
