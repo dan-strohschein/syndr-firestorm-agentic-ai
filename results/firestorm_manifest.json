@@ -1,0 +1,35 @@
+{
+  "start_time": "2025-12-27T08:34:13.955007",
+  "agents": [
+    {
+      "agent_id": "agent_1",
+      "persona": "casual_browser",
+      "query_count": 226,
+      "query_file": "agent_1_queries.json"
+    },
+    {
+      "agent_id": "agent_2",
+      "persona": "casual_browser",
+      "query_count": 248,
+      "query_file": "agent_2_queries.json"
+    },
+    {
+      "agent_id": "agent_3",
+      "persona": "power_user",
+      "query_count": 201,
+      "query_file": "agent_3_queries.json"
+    },
+    {
+      "agent_id": "agent_4",
+      "persona": "admin",
+      "query_count": 262,
+      "query_file": "agent_4_queries.json"
+    },
+    {
+      "agent_id": "agent_5",
+      "persona": "analyst",
+      "query_count": 258,
+      "query_file": "agent_5_queries.json"
+    }
+  ]
+}
