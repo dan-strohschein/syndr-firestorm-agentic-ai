@@ -11,7 +11,7 @@ import sys
 import time
 import threading
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 from pathlib import Path
 
@@ -61,7 +61,9 @@ class FirestormOrchestrator:
         syndrdb_host: str = "127.0.0.1",
         syndrdb_port: int = 1776,
         ollama_url: str = "http://localhost:11434",
-        setup_env: bool = True
+        setup_env: bool = True,
+        no_delay: bool = False,
+        uniform_delay_ms: Optional[int] = None
     ):
         self.num_agents = num_agents
         self.duration_seconds = duration_minutes * 60
@@ -69,6 +71,8 @@ class FirestormOrchestrator:
         self.syndrdb_port = syndrdb_port
         self.ollama_url = ollama_url
         self.setup_env = setup_env
+        self.no_delay = no_delay
+        self.uniform_delay_ms = uniform_delay_ms
         
         self.agents: List[Any] = []
         self.agent_threads: List[threading.Thread] = []
@@ -143,7 +147,8 @@ class FirestormOrchestrator:
             logger.info(f"   Deleted {manifest_path}")
         
         # Delete all agent query files
-        results_dir = Path("results")
+        results_dir = Path("results/agents")
+        results_dir.mkdir(parents=True, exist_ok=True)
         query_files = list(results_dir.glob("agent_*_queries.json"))
         for query_file in query_files:
             query_file.unlink()
@@ -155,9 +160,12 @@ class FirestormOrchestrator:
         """Save each agent's queries to individual files"""
         logger.info("💾 Saving queries to files...")
         
+        # Create agents directory if it doesn't exist
+        Path("results/agents").mkdir(parents=True, exist_ok=True)
+        
         for agent in self.agents:
             if hasattr(agent, 'pregenerated_queries') and agent.pregenerated_queries:
-                query_file = Path(f"results/{agent.agent_id}_queries.json")
+                query_file = Path(f"results/agents/{agent.agent_id}_queries.json")
                 
                 with open(query_file, 'w') as f:
                     json.dump(agent.pregenerated_queries, f, indent=2)
@@ -172,7 +180,7 @@ class FirestormOrchestrator:
         
         total_loaded = 0
         for agent in self.agents:
-            query_file = Path(f"results/{agent.agent_id}_queries.json")
+            query_file = Path(f"results/agents/{agent.agent_id}_queries.json")
             
             if not query_file.exists():
                 logger.error(f"❌ Query file not found: {query_file}")
@@ -275,7 +283,16 @@ class FirestormOrchestrator:
                 # Use pre-generated query execution mode
                 from agents.personas import PERSONAS
                 persona = PERSONAS.get(agent.persona_name, {})
-                think_time_range = persona.get("think_time_seconds", (1, 3))
+                
+                # Determine delay settings
+                if self.no_delay:
+                    think_time_range = (0, 0)
+                elif self.uniform_delay_ms is not None:
+                    delay_seconds = self.uniform_delay_ms / 1000.0
+                    think_time_range = (delay_seconds, delay_seconds)
+                else:
+                    think_time_range = persona.get("think_time_seconds", (1, 3))
+                
                 agent.run_pregenerated_session(think_time_range=think_time_range, stop_time=stop_time)
             else:
                 # Fall back to original runtime generation mode
@@ -430,6 +447,9 @@ class FirestormOrchestrator:
         """Save detailed execution results for each agent"""
         logger.info("💾 Saving detailed per-agent results...")
         
+        # Create agents directory if it doesn't exist
+        Path("results/agents").mkdir(parents=True, exist_ok=True)
+        
         saved_count = 0
         for agent in self.agents:
             # Check if agent has execution results
@@ -437,7 +457,7 @@ class FirestormOrchestrator:
                 continue
             
             # Generate filename: firestorm_{timestamp}_{persona}_{agent_id}.json
-            filename = f"results/firestorm_{timestamp}_{agent.persona_name}_{agent.agent_id}.json"
+            filename = f"results/agents/firestorm_{timestamp}_{agent.persona_name}_{agent.agent_id}.json"
             
             # Prepare metadata and results
             output_data = {
@@ -583,6 +603,19 @@ def parse_args():
         help='Load queries from files and execute test'
     )
     
+    parser.add_argument(
+        '--no-delay',
+        action='store_true',
+        help='Remove all delays between queries (maximum load)'
+    )
+    
+    parser.add_argument(
+        '--uniform-delay',
+        type=int,
+        metavar='MS',
+        help='Set uniform delay in milliseconds between all queries (overrides persona delays)'
+    )
+    
     return parser.parse_args()
 
 
@@ -602,6 +635,11 @@ def main():
         args.duration = 2
         logger.info("🔥 Running QUICK TEST: 5 agents for 2 minutes")
     
+    # Validate delay options
+    if args.no_delay and args.uniform_delay:
+        logger.error("❌ Cannot use --no-delay and --uniform-delay together")
+        sys.exit(1)
+    
     # Create orchestrator
     orchestrator = FirestormOrchestrator(
         num_agents=args.agents,
@@ -609,7 +647,9 @@ def main():
         syndrdb_host=args.host,
         syndrdb_port=args.port,
         ollama_url=args.ollama,
-        setup_env=not args.no_setup
+        setup_env=not args.no_setup,
+        no_delay=args.no_delay,
+        uniform_delay_ms=args.uniform_delay
     )
     
     try:

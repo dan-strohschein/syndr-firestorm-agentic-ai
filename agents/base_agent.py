@@ -53,11 +53,11 @@ class BaseAgent:
         agent_logger.setLevel(logging.INFO)
         agent_logger.propagate = False  # Don't propagate to root logger
         
-        # Create results directory if it doesn't exist
-        Path("results").mkdir(exist_ok=True)
+        # Create results/agents directory if it doesn't exist
+        Path("results/agents").mkdir(parents=True, exist_ok=True)
         
         # Create file handler for this agent
-        log_file = f"results/{self.agent_id}.log"
+        log_file = f"results/agents/{self.agent_id}.log"
         file_handler = logging.FileHandler(log_file, mode='w')  # 'w' to start fresh each run
         file_handler.setLevel(logging.INFO)
         
@@ -169,19 +169,29 @@ class BaseAgent:
         
         This method replaces the standard run_session when queries are pre-generated.
         It executes each query in sequence, tracking detailed metrics.
+        Queries are sent synchronously - each query waits for a response before the next is sent.
         
         Args:
-            think_time_range: Tuple of (min, max) seconds to wait between queries
+            think_time_range: Tuple of (min, max) seconds to wait between queries.
+                             Set to (0, 0) for no delay (continuous synchronous execution)
             stop_time: Unix timestamp when execution should stop (None = run all queries)
         """
         if not self.pregenerated_queries:
             self.logger.error(f"[{self.agent_id}] No pre-generated queries available!")
             return
         
-        self.logger.info(
-            f"[{self.agent_id}] ({self.persona_name}) Starting pre-generated session "
-            f"with {len(self.pregenerated_queries)} queries"
-        )
+        # Log execution mode
+        if think_time_range == (0, 0):
+            self.logger.info(
+                f"[{self.agent_id}] ({self.persona_name}) Starting NO-DELAY mode: "
+                f"{len(self.pregenerated_queries)} queries (synchronous, wait-for-response)"
+            )
+        else:
+            self.logger.info(
+                f"[{self.agent_id}] ({self.persona_name}) Starting pre-generated session "
+                f"with {len(self.pregenerated_queries)} queries "
+                f"(delay: {think_time_range[0]}-{think_time_range[1]}s between queries)"
+            )
         
         self.start_session()
         session_start_time = time.time()
@@ -201,7 +211,7 @@ class BaseAgent:
             timestamp_sent = datetime.now().isoformat()
             time_sent = time.time()
             
-            # Execute query
+            # Execute query (synchronous - waits for response before continuing)
             result = self._execute_query(query)
             
             # Timestamp after receiving (with nanosecond precision)
@@ -238,7 +248,8 @@ class BaseAgent:
             self.execution_results.append(execution_detail)
             
             # Think time between queries (except for last one)
-            if idx < len(self.pregenerated_queries) - 1:
+            # When think_time_range is (0, 0), no delay - but queries still execute synchronously
+            if idx < len(self.pregenerated_queries) - 1 and think_time_range != (0, 0):
                 think_time = random.uniform(*think_time_range)
                 time.sleep(think_time)
         

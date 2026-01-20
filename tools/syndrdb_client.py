@@ -2,6 +2,7 @@
 import socket
 import json
 import time
+import threading
 from typing import Optional, Dict, Any
 import logging
 
@@ -25,6 +26,7 @@ class SyndrDBClient:
         self.timeout = timeout
         self.socket:  Optional[socket.socket] = None
         self.connected = False
+        self._lock = threading.Lock()  # Ensure thread-safe socket operations
         
     def connect(self) -> bool:
         """Establish connection to SyndrDB"""
@@ -81,57 +83,59 @@ class SyndrDBClient:
     
     def execute(self, query: str) -> Dict[str, Any]:
         """Execute a SyndrQL query and return parsed result"""
-        if not self.connected:
-            if not self.connect():
-                return {"error": "Not connected", "success": False}
-        
-        start_time = time.time()
-        
-        try:
-            # Send query
-            query_bytes = query.encode('utf-8') + b'\x04'
-            self. socket.sendall(query_bytes)
+        # Use lock to ensure atomic send/receive operations
+        with self._lock:
+            if not self.connected:
+                if not self.connect():
+                    return {"error": "Not connected", "success": False}
             
-            # Receive response (terminated by newline)
-            response_data = b''
-            while True:
-                chunk = self.socket.recv(4096)
-                if not chunk: 
-                    break
-                response_data += chunk
+            start_time = time.time()
+            
+            try:
+                # Send query with EOT delimiter
+                query_bytes = query.encode('utf-8') + b'\x04'
+                self.socket.sendall(query_bytes)
                 
-                # Check if we have the newline terminator
-                if b'\n' in response_data:
-                    # Remove terminator and parse
-                    response_data = response_data.split(b'\n')[0]
-                    break
-            
-            latency = time.time() - start_time
-            
-            # Parse JSON response
-            result = json.loads(response_data.decode('utf-8'))
-            
-            return {
-                "success":  True,
-                "result": result,
-                "latency_ms": latency * 1000,
-                "query": query
-            }
-            
-        except socket.timeout:
-            return {
-                "success": False,
-                "error": "Query timeout",
-                "latency_ms": (time.time() - start_time) * 1000,
-                "query": query
-            }
-        except Exception as e: 
-            logger.error(f"Query execution failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "query": query
-            }
+                # Receive response (terminated by newline)
+                response_data = b''
+                while True:
+                    chunk = self.socket.recv(4096)
+                    if not chunk: 
+                        break
+                    response_data += chunk
+                    
+                    # Check if we have the newline terminator
+                    if b'\n' in response_data:
+                        # Remove terminator and parse
+                        response_data = response_data.split(b'\n')[0]
+                        break
+                
+                latency = time.time() - start_time
+                
+                # Parse JSON response
+                result = json.loads(response_data.decode('utf-8'))
+                
+                return {
+                    "success":  True,
+                    "result": result,
+                    "latency_ms": latency * 1000,
+                    "query": query
+                }
+                
+            except socket.timeout:
+                return {
+                    "success": False,
+                    "error": "Query timeout",
+                    "latency_ms": (time.time() - start_time) * 1000,
+                    "query": query
+                }
+            except Exception as e: 
+                logger.error(f"Query execution failed: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "query": query
+                }
     
     def disconnect(self):
         """Close connection"""
