@@ -197,9 +197,19 @@ Available actions: browse_products, search_products, quick_purchase, check_revie
         
         elif action_name == "simple_query":
             bundle = params.get("bundle", "products")
-            return f'''SELECT "DocumentID", "name", "price"
-                      FROM "{bundle}"
-                      LIMIT 50;'''
+            # Bundle-specific field selections
+            if bundle == "products":
+                return f'''SELECT "DocumentID", "name", "price"
+                          FROM "{bundle}"
+                          LIMIT 50;'''
+            elif bundle == "orders":
+                return f'''SELECT "DocumentID", "total", "status"
+                          FROM "{bundle}"
+                          LIMIT 50;'''
+            else:  # users
+                return f'''SELECT "DocumentID", "name", "email"
+                          FROM "{bundle}"
+                          LIMIT 50;'''
         
         elif action_name == "join_simple":
             bundles = params.get("bundles", ["products", "reviews"])

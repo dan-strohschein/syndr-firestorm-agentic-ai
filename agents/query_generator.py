@@ -122,7 +122,7 @@ class QueryGenerator:
         Returns:
             Valid SyndrQL query string or None if all attempts fail
         """
-        max_attempts = 10
+        max_attempts = 3  # Only 3 attempts - Ollama should work or we fallback quickly
         
         for attempt in range(max_attempts):
             self.generation_attempts += 1
@@ -130,7 +130,7 @@ class QueryGenerator:
             # Select action based on query breakdown percentages
             action_name = self._select_action()
             
-            # Try Ollama first
+            # Try Ollama first (with improved prompting)
             query = self._try_ollama_generation(action_name)
             
             # Fallback to deterministic generation if Ollama fails
@@ -174,37 +174,77 @@ class QueryGenerator:
             Generated query string or None if Ollama fails
         """
         try:
-            # Build prompt for Ollama
-            prompt = f"""Generate a SyndrQL query for the action: {action_name}
+            # Build comprehensive prompt with full SyndrQL syntax rules
+            prompt = f"""Generate a valid SyndrQL query for: {action_name}
 
-Follow these rules:
-- Return ONLY the raw SyndrQL query, no JSON, no explanation
-- Query must end with semicolon
-- Use double quotes for identifiers
-- Use proper SyndrQL syntax
+CRITICAL SYNDRQL SYNTAX RULES:
+1. ALL identifiers (bundle names, field names) MUST use double quotes: "products", "name"
+2. String values use double quotes: "Electronics"
+3. Equality operator is == (double equals)
+4. Query MUST end with semicolon ;
+5. Comparison operators: ==, !=, <, >, <=, >=
+6. Logical operators: AND, OR
+7. Keywords are case-insensitive: SELECT, FROM, WHERE, JOIN, ON
 
-Example for simple_query:
+VALID SYNDRQL EXAMPLES:
+
+SELECT queries:
 SELECT "DocumentID", "name" FROM "products" LIMIT 50;
+SELECT TOP 10 * FROM "users";
+SELECT COUNT(*) FROM "orders" WHERE "total" > 100;
+SELECT * FROM "products" WHERE "category" == "Electronics" ORDER BY "price" DESC;
+SELECT "category", COUNT(*) FROM "products" GROUP BY "category";
 
-Example for join_simple:
-SELECT "products"."name", "reviews"."rating" FROM "products" JOIN "reviews" ON "products"."DocumentID" == "reviews"."product_id" WHERE ("reviews"."rating" >= 4) LIMIT 50;
+JOIN queries:
+SELECT "products"."name", "reviews"."rating" FROM "products" JOIN "reviews" ON "products"."DocumentID" == "reviews"."product_id" WHERE "reviews"."rating" >= 4 LIMIT 50;
+SELECT "users"."name", "orders"."total" FROM "users" JOIN "orders" ON "users"."DocumentID" == "orders"."user_id";
 
-Example for create_document:
+CREATE document:
 ADD DOCUMENT TO BUNDLE "products" WITH ({{"name" = "Product X"}}, {{"price" = 99.99}}, {{"category" = "Electronics"}}, {{"stock" = 100}});
 
-Now generate a query for: {action_name}"""
+UPDATE documents:
+UPDATE DOCUMENTS IN BUNDLE "products" ("stock" = 50) WHERE "category" == "Electronics";
+
+DELETE documents:
+DELETE DOCUMENTS FROM "reviews" WHERE "rating" <= 2;
+
+NOW GENERATE: {action_name}
+Return ONLY the SyndrQL query, nothing else."""
+
+            # Add action-specific guidance
+            action_hints = {
+                "simple_query": 'Generate a SELECT query with 2-3 fields and LIMIT 50',
+                "large_simple_query": 'Generate a SELECT query with LIMIT between 1000-2000',
+                "bulk_simple_query": 'Generate a SELECT query with LIMIT between 1000-2000',
+                "join_simple": 'Generate a JOIN between 2 bundles with WHERE clause and LIMIT 50',
+                "large_join_simple": 'Generate a JOIN between 2 bundles with LIMIT 500-1000',
+                "join_complex": 'Generate a JOIN between 3 bundles with WHERE and LIMIT 50',
+                "large_join_complex": 'Generate a JOIN between 3 bundles with LIMIT 200-500',
+                "create_document": 'Generate ADD DOCUMENT with 3-5 fields',
+                "bulk_create": 'Generate ADD DOCUMENT with 3-5 fields',
+                "update_documents": 'Generate UPDATE DOCUMENTS with WHERE clause',
+                "bulk_update": 'Generate UPDATE DOCUMENTS with WHERE clause',
+                "delete_documents": 'Generate DELETE DOCUMENTS with WHERE clause',
+                "bulk_delete": 'Generate DELETE DOCUMENTS with WHERE clause',
+                "aggregate_query": 'Generate SELECT with COUNT(*), SUM(), AVG() and GROUP BY'
+            }
+            
+            if action_name in action_hints:
+                prompt += f"\n\nSpecific requirement: {action_hints[action_name]}"
 
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": "llama3.2:1b",
+                    "model": "llama3.2:3b",  # Upgraded from 1b to 3b for better accuracy
                     "prompt": prompt,
-                    "system": self.persona["system_prompt"],
+                    "system": "You are a SyndrQL query expert. Generate only valid SyndrQL queries following the exact syntax rules provided.",
                     "stream": False,
                     "options": {
-                        "temperature": 0.7,
+                        "temperature": 0.3,  # Lower temperature for more consistent output
                         "top_p": 0.9,
-                        "max_tokens": 500
+                        "top_k": 40,
+                        "repeat_penalty": 1.1,  # Reduce repetition
+                        "num_predict": 200  # Limit response length to reduce rambling
                     }
                 },
                 timeout=30
@@ -252,11 +292,27 @@ Now generate a query for: {action_name}"""
             use_group = random.random() < 0.3
             limit = self._get_limit_for_action(action_name)
             
+            bundle = random.choice(["products", "orders", "users"])
+            
+            # Bundle-specific field mappings
+            if bundle == "products":
+                fields = ["DocumentID", "name"]
+                order_by = random.choice(["name", "created_at", None]) if use_order else None
+                group_by = "category" if use_group else None
+            elif bundle == "orders":
+                fields = ["DocumentID", "total"]
+                order_by = random.choice(["total", "created_at", None]) if use_order else None
+                group_by = "status" if use_group else None
+            else:  # users
+                fields = ["DocumentID", "name"]
+                order_by = random.choice(["name", "created_at", None]) if use_order else None
+                group_by = None  # users has no good grouping field
+            
             return {
-                "bundle": random.choice(["products", "orders", "users"]),
-                "fields": ["DocumentID", "name"],
-                "order_by": random.choice(["name", "created_at", None]) if use_order else None,
-                "group_by": random.choice(["category", None]) if use_group else None,
+                "bundle": bundle,
+                "fields": fields,
+                "order_by": order_by,
+                "group_by": group_by,
                 "limit": limit
             }
         
@@ -304,10 +360,17 @@ Now generate a query for: {action_name}"""
             }
         
         elif "aggregate" in action_name:
+            bundle = random.choice(["orders", "products"])
+            # Use bundle-appropriate fields for GROUP BY
+            if bundle == "orders":
+                group_by = "status"  # orders has: total, status, created_at
+            else:  # products
+                group_by = "category"  # products has: name, price, category, stock, rating, created_at
+            
             return {
-                "bundle": random.choice(["orders", "products"]),
+                "bundle": bundle,
                 "aggregates": ["COUNT(*)", "SUM(total)", "AVG(total)"],
-                "group_by": random.choice(["category", "status"])
+                "group_by": group_by
             }
         
         return {}
@@ -349,13 +412,14 @@ Now generate a query for: {action_name}"""
             group_by = params.get("group_by")
             limit = params.get("limit", 50)
             
-            fields_str = ", ".join([f'"{f}"' for f in fields])
-            query = f'SELECT {fields_str} FROM "{bundle}"'
-            
-            if order_by:
-                query += f' ORDER BY "{order_by}" DESC'
+            # If GROUP BY is present, only select the grouped field + aggregates
             if group_by:
-                query += f' GROUP BY "{group_by}"'
+                query = f'SELECT "{group_by}", COUNT(*) as "count" FROM "{bundle}" GROUP BY "{group_by}"'
+            else:
+                fields_str = ", ".join([f'"{f}"' for f in fields])
+                query = f'SELECT {fields_str} FROM "{bundle}"'
+                if order_by:
+                    query += f' ORDER BY "{order_by}" DESC'
             
             query += f" LIMIT {limit};"
             return query
@@ -368,15 +432,20 @@ Now generate a query for: {action_name}"""
             order_by = params.get("order_by")
             group_by = params.get("group_by")
             
-            query = f'''SELECT "{bundles[0]}"."DocumentID", "{bundles[0]}"."name", "{bundles[1]}"."rating"
+            # If GROUP BY, only select grouped field + aggregates
+            if group_by:
+                query = f'''SELECT "{bundles[0]}"."category", COUNT(*) as "count", AVG("{bundles[1]}"."rating") as "avg_rating"
+                      FROM "{bundles[0]}"
+                      JOIN "{bundles[1]}" ON "{bundles[0]}"."DocumentID" == "{bundles[1]}"."product_id"
+                      WHERE {where}
+                      GROUP BY "{bundles[0]}"."category"'''
+            else:
+                query = f'''SELECT "{bundles[0]}"."DocumentID", "{bundles[0]}"."name", "{bundles[1]}"."rating"
                       FROM "{bundles[0]}"
                       JOIN "{bundles[1]}" ON "{bundles[0]}"."DocumentID" == "{bundles[1]}"."product_id"
                       WHERE {where}'''
-            
-            if order_by:
-                query += f' ORDER BY "{order_by}" DESC'
-            if group_by:
-                query += f' GROUP BY "{group_by}"'
+                if order_by:
+                    query += f' ORDER BY "{order_by}" DESC'
                 
             query += f" LIMIT {limit};"
             return query
@@ -389,19 +458,24 @@ Now generate a query for: {action_name}"""
             order_by = params.get("order_by")
             group_by = params.get("group_by")
             
-            query = f'''SELECT "{bundles[0]}"."DocumentID", "{bundles[0]}"."name", "{bundles[1]}"."rating"
+            if group_by:
+                # GROUP BY query with aggregates
+                query = f'''SELECT "{bundles[0]}"."category", COUNT(*) as "count", AVG("{bundles[1]}"."rating") as "avg_rating"
                       FROM "{bundles[0]}"
                       JOIN "{bundles[1]}" ON "{bundles[0]}"."DocumentID" == "{bundles[1]}"."product_id"'''
-            
-            if len(bundles) > 2:
-                query += f' JOIN "{bundles[2]}" ON "{bundles[1]}"."user_id" == "{bundles[2]}"."DocumentID"'
-            
-            query += f' WHERE {where}'
-            
-            if order_by:
-                query += f' ORDER BY "{order_by}" DESC'
-            if group_by:
-                query += f' GROUP BY "{group_by}"'
+                if len(bundles) > 2:
+                    query += f' JOIN "{bundles[2]}" ON "{bundles[1]}"."user_id" == "{bundles[2]}"."DocumentID"'
+                query += f' WHERE {where} GROUP BY "{bundles[0]}"."category"'
+            else:
+                # Regular JOIN without GROUP BY
+                query = f'''SELECT "{bundles[0]}"."DocumentID", "{bundles[0]}"."name", "{bundles[1]}"."rating"
+                      FROM "{bundles[0]}"
+                      JOIN "{bundles[1]}" ON "{bundles[0]}"."DocumentID" == "{bundles[1]}"."product_id"'''
+                if len(bundles) > 2:
+                    query += f' JOIN "{bundles[2]}" ON "{bundles[1]}"."user_id" == "{bundles[2]}"."DocumentID"'
+                query += f' WHERE {where}'
+                if order_by:
+                    query += f' ORDER BY "{order_by}" DESC'
             
             query += f" LIMIT {limit};"
             return query

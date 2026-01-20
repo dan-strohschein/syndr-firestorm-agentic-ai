@@ -195,9 +195,19 @@ Available actions: bulk_update_inventory, process_orders, generate_report,
         
         elif action_name == "simple_query":
             bundle = params.get("bundle", "products")
-            return f'''SELECT "DocumentID", "name", "stock"
-                      FROM "{bundle}"
-                      LIMIT 100;'''
+            # Bundle-specific field selections
+            if bundle == "products":
+                return f'''SELECT "DocumentID", "name", "stock"
+                          FROM "{bundle}"
+                          LIMIT 100;'''
+            elif bundle == "orders":
+                return f'''SELECT "DocumentID", "total", "status"
+                          FROM "{bundle}"
+                          LIMIT 100;'''
+            else:  # users
+                return f'''SELECT "DocumentID", "name", "email"
+                          FROM "{bundle}"
+                          LIMIT 100;'''
         
         elif action_name == "join_simple":
             bundles = params.get("bundles", ["products", "reviews"])

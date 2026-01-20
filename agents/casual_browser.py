@@ -92,13 +92,29 @@ Or choose from:  browse_products, search_products, view_product, add_to_cart, vi
         if action_name == "simple_query":
             use_order = random.random() < 0.5
             use_group = random.random() < 0.5 and not use_order
+            
+            bundle = random.choice(["products", "orders", "users"])
+            # Bundle-specific fields
+            if bundle == "products":
+                fields = ["DocumentID", "name"]
+                order_by = "name" if use_order else None
+                group_by = "category" if use_group else None
+            elif bundle == "orders":
+                fields = ["DocumentID", "total"]
+                order_by = "total" if use_order else None
+                group_by = "status" if use_group else None
+            else:  # users
+                fields = ["DocumentID", "name"]
+                order_by = "name" if use_order else None
+                group_by = None  # users has no good grouping field
+            
             return {
                 "action": action_name,
                 "params": {
-                    "bundle": random.choice(["products", "orders", "users"]),
-                    "fields": ["DocumentID", "name"],
-                    "order_by": "name" if use_order else None,
-                    "group_by": "category" if use_group else None
+                    "bundle": bundle,
+                    "fields": fields,
+                    "order_by": order_by,
+                    "group_by": group_by
                 }
             }
         elif action_name == "join_simple":

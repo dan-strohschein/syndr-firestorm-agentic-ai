@@ -77,6 +77,7 @@ class FirestormOrchestrator:
         
         self.test_start_time: float = 0
         self.test_end_time: float = 0
+        self.stop_time: float = 0  # When the test should stop
         self.running = False
         
         # Create results directory
@@ -266,8 +267,8 @@ class FirestormOrchestrator:
             ollama_url=self.ollama_url
         )
     
-    def _run_agent(self, agent, duration: int):
-        """Run a single agent for specified duration"""
+    def _run_agent(self, agent, stop_time: float):
+        """Run a single agent until stop_time is reached"""
         try:
             # Check if agent has pre-generated queries
             if hasattr(agent, 'pregenerated_queries') and agent.pregenerated_queries:
@@ -275,10 +276,10 @@ class FirestormOrchestrator:
                 from agents.personas import PERSONAS
                 persona = PERSONAS.get(agent.persona_name, {})
                 think_time_range = persona.get("think_time_seconds", (1, 3))
-                agent.run_pregenerated_session(think_time_range=think_time_range)
+                agent.run_pregenerated_session(think_time_range=think_time_range, stop_time=stop_time)
             else:
                 # Fall back to original runtime generation mode
-                agent.run_session(duration_minutes=duration / 60)
+                agent.run_session(duration_minutes=(stop_time - time.time()) / 60)
         except Exception as e:
             logger.error(f"Agent {agent.agent_id} crashed: {e}")
     
@@ -291,13 +292,14 @@ class FirestormOrchestrator:
         
         self.running = True
         self.test_start_time = time.time()
+        self.stop_time = self.test_start_time + self.duration_seconds
         
-        # Start all agent threads
+        # Start all agent threads (non-daemon so we can control shutdown)
         for agent in self.agents:
             thread = threading.Thread(
                 target=self._run_agent,
-                args=(agent, self.duration_seconds),
-                daemon=True
+                args=(agent, self.stop_time),
+                daemon=False
             )
             thread.start()
             self.agent_threads.append(thread)
@@ -328,12 +330,28 @@ class FirestormOrchestrator:
             )
     
     def wait_for_completion(self):
-        """Wait for all agents to complete"""
+        """Wait for all agents to complete or force stop at duration limit"""
         logger.info("Waiting for agents to complete...")
         
-        # Wait for all threads
-        for thread in self.agent_threads:
-            thread.join()
+        # Calculate remaining time
+        remaining_time = self.stop_time - time.time()
+        
+        if remaining_time > 0:
+            # Wait for threads with a timeout equal to remaining time + 5 seconds grace
+            timeout = remaining_time + 5
+            logger.info(f"Waiting up to {timeout:.1f}s for agents to finish...")
+            
+            for thread in self.agent_threads:
+                time_left = self.stop_time - time.time() + 5  # Grace period
+                if time_left > 0:
+                    thread.join(timeout=time_left)
+                else:
+                    break
+        
+        # Force stop if any threads are still running
+        still_running = sum(1 for t in self.agent_threads if t.is_alive())
+        if still_running > 0:
+            logger.warning(f"⏰ Test duration reached! Forcing stop. {still_running} agents still running.")
         
         self.running = False
         self.test_end_time = time.time()

@@ -94,13 +94,23 @@ Available actions: revenue_analysis, customer_segments, product_performance,
         if action_name == "large_simple_query":
             use_order = random.random() < 0.5
             use_group = random.random() < 0.5
+            
+            bundle = random.choice(["products", "orders", "users"])
+            # Bundle-specific GROUP BY fields
+            if bundle == "products":
+                group_by_field = "category" if use_group else None
+            elif bundle == "orders":
+                group_by_field = "status" if use_group else None
+            else:  # users
+                group_by_field = None  # users has no good grouping field
+            
             return {
                 "action": action_name,
                 "params": {
-                    "bundle": random.choice(["products", "orders", "users"]),
+                    "bundle": bundle,
                     "limit": random.randint(1000, 2000),
                     "order_by": random.choice(["DocumentID", "created_at"]) if use_order else None,
-                    "group_by": random.choice(["category", "status"]) if use_group else None
+                    "group_by": group_by_field
                 }
             }
         elif action_name == "large_join_simple":
