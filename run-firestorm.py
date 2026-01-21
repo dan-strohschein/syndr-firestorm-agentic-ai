@@ -63,7 +63,8 @@ class FirestormOrchestrator:
         ollama_url: str = "http://localhost:11434",
         setup_env: bool = True,
         no_delay: bool = False,
-        uniform_delay_ms: Optional[int] = None
+        uniform_delay_ms: Optional[int] = None,
+        batch_conns: int = 10
     ):
         self.num_agents = num_agents
         self.duration_seconds = duration_minutes * 60
@@ -73,6 +74,7 @@ class FirestormOrchestrator:
         self.setup_env = setup_env
         self.no_delay = no_delay
         self.uniform_delay_ms = uniform_delay_ms
+        self.batch_conns = batch_conns
         
         self.agents: List[Any] = []
         self.agent_threads: List[threading.Thread] = []
@@ -278,11 +280,11 @@ class FirestormOrchestrator:
     def connect_all_agents(self):
         """Connect all agents to SyndrDB in parallel batches before they start sending queries"""
         logger.info("🔥 FIRESTORM: Connecting all agents to SyndrDB...")
-        logger.info(f"   Connecting {len(self.agents)} agents in batches of 10...")
+        logger.info(f"   Connecting {len(self.agents)} agents in batches of {self.batch_conns}...")
         
         connected_count = 0
         failed_agents = []
-        batch_size = 10
+        batch_size = self.batch_conns
         
         def connect_agent(agent):
             """Connect a single agent and return result"""
@@ -689,6 +691,13 @@ def parse_args():
         help='Set uniform delay in milliseconds between all queries (overrides persona delays)'
     )
     
+    parser.add_argument(
+        '--batch-conns',
+        type=int,
+        default=10,
+        help='Number of agents to connect simultaneously in each batch (default: 10)'
+    )
+    
     return parser.parse_args()
 
 
@@ -722,7 +731,8 @@ def main():
         ollama_url=args.ollama,
         setup_env=not args.no_setup,
         no_delay=args.no_delay,
-        uniform_delay_ms=args.uniform_delay
+        uniform_delay_ms=args.uniform_delay,
+        batch_conns=args.batch_conns
     )
     
     try:
