@@ -321,13 +321,13 @@ class FirestormOrchestrator:
                 if success:
                     connected_count += 1
                     batch_success += 1
-                    logger.info(f"     ✓ Connected {agent.agent_id} ({agent.persona_name})")
                 else:
                     failed_agents.append(agent.agent_id)
                     batch_failed += 1
                     logger.error(f"     ✗ Failed to connect {agent.agent_id}: {error}")
             
-            logger.info(f"   Batch {batch_num}/{total_batches}: {batch_success} connected, {batch_failed} failed")
+            # Only log batch summary (not individual successes to reduce logging overhead)
+            logger.info(f"   Batch {batch_num}/{total_batches} complete: {batch_success} connected, {batch_failed} failed")
         
         if failed_agents:
             logger.error(f"❌ Failed to connect {len(failed_agents)} agents: {failed_agents}")
