@@ -276,20 +276,58 @@ class FirestormOrchestrator:
         )
     
     def connect_all_agents(self):
-        """Connect all agents to SyndrDB before they start sending queries"""
+        """Connect all agents to SyndrDB in parallel batches before they start sending queries"""
         logger.info("🔥 FIRESTORM: Connecting all agents to SyndrDB...")
+        logger.info(f"   Connecting {len(self.agents)} agents in batches of 10...")
         
         connected_count = 0
         failed_agents = []
+        batch_size = 10
         
-        for agent in self.agents:
+        def connect_agent(agent):
+            """Connect a single agent and return result"""
             try:
                 agent.db_client.connect()
-                logger.info(f"✓ Connected {agent.agent_id} ({agent.persona_name})")
-                connected_count += 1
+                return (agent, True, None)
             except Exception as e:
-                logger.error(f"✗ Failed to connect {agent.agent_id}: {e}")
-                failed_agents.append(agent.agent_id)
+                return (agent, False, str(e))
+        
+        # Process agents in batches
+        for batch_start in range(0, len(self.agents), batch_size):
+            batch_end = min(batch_start + batch_size, len(self.agents))
+            batch = self.agents[batch_start:batch_end]
+            batch_num = (batch_start // batch_size) + 1
+            total_batches = (len(self.agents) + batch_size - 1) // batch_size
+            
+            logger.info(f"   Batch {batch_num}/{total_batches}: Connecting {len(batch)} agents...")
+            
+            # Connect agents in this batch concurrently
+            batch_threads = []
+            batch_results = []
+            
+            for agent in batch:
+                thread = threading.Thread(target=lambda a=agent: batch_results.append(connect_agent(a)))
+                thread.start()
+                batch_threads.append(thread)
+            
+            # Wait for all threads in this batch to complete
+            for thread in batch_threads:
+                thread.join()
+            
+            # Process results from this batch
+            batch_success = 0
+            batch_failed = 0
+            for agent, success, error in batch_results:
+                if success:
+                    connected_count += 1
+                    batch_success += 1
+                    logger.info(f"     ✓ Connected {agent.agent_id} ({agent.persona_name})")
+                else:
+                    failed_agents.append(agent.agent_id)
+                    batch_failed += 1
+                    logger.error(f"     ✗ Failed to connect {agent.agent_id}: {error}")
+            
+            logger.info(f"   Batch {batch_num}/{total_batches}: {batch_success} connected, {batch_failed} failed")
         
         if failed_agents:
             logger.error(f"❌ Failed to connect {len(failed_agents)} agents: {failed_agents}")
