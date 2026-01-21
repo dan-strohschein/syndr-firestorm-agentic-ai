@@ -163,7 +163,7 @@ class BaseAgent:
         metrics = self.get_metrics()
         self.logger.info(f"[{self.agent_id}] Session ended. Metrics: {metrics}")
     
-    def run_pregenerated_session(self, think_time_range: tuple = (1, 3), stop_time: float = None):
+    def run_pregenerated_session(self, think_time_range: tuple = (1, 3), stop_time: float = None, skip_connect: bool = False):
         """
         Run session using pre-generated queries.
         
@@ -175,6 +175,7 @@ class BaseAgent:
             think_time_range: Tuple of (min, max) seconds to wait between queries.
                              Set to (0, 0) for no delay (continuous synchronous execution)
             stop_time: Unix timestamp when execution should stop (None = run all queries)
+            skip_connect: If True, skip connection (agent already connected by orchestrator)
         """
         if not self.pregenerated_queries:
             self.logger.error(f"[{self.agent_id}] No pre-generated queries available!")
@@ -193,7 +194,12 @@ class BaseAgent:
                 f"(delay: {think_time_range[0]}-{think_time_range[1]}s between queries)"
             )
         
-        self.start_session()
+        # Only connect if not already connected
+        if not skip_connect:
+            self.start_session()
+        else:
+            self.logger.info(f"[{self.agent_id}] Using existing connection (already connected by orchestrator)")
+        
         session_start_time = time.time()
         
         # Execute each pre-generated query

@@ -275,6 +275,29 @@ class FirestormOrchestrator:
             ollama_url=self.ollama_url
         )
     
+    def connect_all_agents(self):
+        """Connect all agents to SyndrDB before they start sending queries"""
+        logger.info("🔥 FIRESTORM: Connecting all agents to SyndrDB...")
+        
+        connected_count = 0
+        failed_agents = []
+        
+        for agent in self.agents:
+            try:
+                agent.db_client.connect()
+                logger.info(f"✓ Connected {agent.agent_id} ({agent.persona_name})")
+                connected_count += 1
+            except Exception as e:
+                logger.error(f"✗ Failed to connect {agent.agent_id}: {e}")
+                failed_agents.append(agent.agent_id)
+        
+        if failed_agents:
+            logger.error(f"❌ Failed to connect {len(failed_agents)} agents: {failed_agents}")
+            raise Exception(f"Agent connection failed for: {failed_agents}")
+        
+        logger.info(f"✅ All {connected_count} agents successfully connected to SyndrDB!")
+        logger.info("   Agents are ready to send queries.")
+    
     def _run_agent(self, agent, stop_time: float):
         """Run a single agent until stop_time is reached"""
         try:
@@ -293,7 +316,8 @@ class FirestormOrchestrator:
                 else:
                     think_time_range = persona.get("think_time_seconds", (1, 3))
                 
-                agent.run_pregenerated_session(think_time_range=think_time_range, stop_time=stop_time)
+                # Run session without connecting (already connected)
+                agent.run_pregenerated_session(think_time_range=think_time_range, stop_time=stop_time, skip_connect=True)
             else:
                 # Fall back to original runtime generation mode
                 agent.run_session(duration_minutes=(stop_time - time.time()) / 60)
@@ -306,6 +330,17 @@ class FirestormOrchestrator:
         logger.info(f"Agents: {self.num_agents}")
         logger.info(f"Duration: {self.duration_seconds / 60:.1f} minutes")
         logger.info(f"Target: {self.syndrdb_host}:{self.syndrdb_port}")
+        logger.info("")
+        logger.info("Startup Sequence:")
+        logger.info(f"  0. ✓ Created {self.num_agents} agents")
+        logger.info(f"  1. ✓ Generated SQL statements for each agent")
+        logger.info("  2. Connecting all agents to SyndrDB...")
+        
+        # Connect all agents first - everyone must be connected before any can send queries
+        self.connect_all_agents()
+        
+        logger.info("  3. Starting query execution for all agents...")
+        logger.info("")
         
         self.running = True
         self.test_start_time = time.time()
@@ -329,7 +364,7 @@ class FirestormOrchestrator:
         )
         health_thread.start()
         
-        logger.info("✅ All agents launched!")
+        logger.info("✅ All agents launched and sending queries!")
         
     def _monitor_health(self):
         """Monitor test health during execution"""
