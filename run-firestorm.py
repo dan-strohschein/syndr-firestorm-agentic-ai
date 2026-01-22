@@ -336,11 +336,19 @@ class FirestormOrchestrator:
             raise Exception(f"Agent connection failed for: {failed_agents}")
         
         logger.info(f"✅ All {connected_count} agents successfully connected to SyndrDB!")
-        logger.info("   Agents are ready to send queries.")
+        logger.info("   Agents are ready to send queries (waiting for all threads to start).")
     
-    def _run_agent(self, agent, stop_time: float):
+    def _run_agent(self, agent, start_barrier: threading.Barrier):
         """Run a single agent until stop_time is reached"""
         try:
+            # Wait at the barrier until all agent threads are ready
+            agent.logger.info(f"[{agent.agent_id}] Waiting at start barrier for all agents to be ready...")
+            start_barrier.wait()
+            
+            # After barrier, use the orchestrator's stop_time (set after all threads created)
+            stop_time = self.stop_time
+            agent.logger.info(f"[{agent.agent_id}] All agents ready - starting query execution!")
+            
             # Check if agent has pre-generated queries
             if hasattr(agent, 'pregenerated_queries') and agent.pregenerated_queries:
                 # Use pre-generated query execution mode
@@ -383,19 +391,37 @@ class FirestormOrchestrator:
         logger.info("")
         
         self.running = True
-        self.test_start_time = time.time()
-        self.stop_time = self.test_start_time + self.duration_seconds
+        
+        # Create a barrier that all agents must wait at before starting queries
+        # This ensures ALL agents are connected and ready before ANY agent starts sending queries
+        # The barrier requires N+1 parties: N agents + the main thread
+        # This way the main thread controls when all agents are released
+        start_barrier = threading.Barrier(len(self.agents) + 1)
         
         # Start all agent threads (non-daemon so we can control shutdown)
+        # Threads will wait at the barrier until all are ready
         for agent in self.agents:
             thread = threading.Thread(
                 target=self._run_agent,
-                args=(agent, self.stop_time),
+                args=(agent, start_barrier),
                 daemon=False
             )
             thread.start()
             self.agent_threads.append(thread)
-            logger.info(f"Started {agent.agent_id} ({agent.persona_name})")
+            logger.info(f"Started thread for {agent.agent_id} ({agent.persona_name})")
+        
+        logger.info(f"✅ All {len(self.agents)} agent threads started - synchronizing at barrier...")
+        
+        # Set the actual test timing RIGHT BEFORE releasing the barrier
+        # This ensures all agents get the exact same stop_time when they start
+        self.test_start_time = time.time()
+        self.stop_time = self.test_start_time + self.duration_seconds
+        
+        # Main thread also waits at the barrier - this releases all agents simultaneously
+        # Since we set stop_time above, all agents will read the correct value
+        start_barrier.wait()
+        
+        logger.info(f"🚀 BARRIER RELEASED - All {len(self.agents)} agents now executing queries!")
         
         # Start health monitoring in background
         health_thread = threading.Thread(

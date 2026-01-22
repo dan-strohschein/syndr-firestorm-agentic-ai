@@ -202,62 +202,90 @@ class BaseAgent:
         
         session_start_time = time.time()
         
-        # Execute each pre-generated query
-        for idx, query in enumerate(self.pregenerated_queries):
-            # Check if we should stop
-            if stop_time is not None and time.time() >= stop_time:
+        # Track total queries executed and cycles through query list
+        total_queries_executed = 0
+        cycle_count = 0
+        
+        # Execute queries, cycling back to beginning if time remains
+        while True:
+            cycle_count += 1
+            if cycle_count > 1:
                 self.logger.info(
-                    f"[{self.agent_id}] ({self.persona_name}) Stopping due to time limit. "
-                    f"Executed {idx} of {len(self.pregenerated_queries)} queries."
+                    f"[{self.agent_id}] ({self.persona_name}) Starting query cycle {cycle_count} "
+                    f"(looping back to beginning)"
                 )
-                break
             
-            # Timestamp before sending (with nanosecond precision)
-            time_sent_ns = time.time_ns()
-            timestamp_sent = datetime.now().isoformat()
-            time_sent = time.time()
+            for idx, query in enumerate(self.pregenerated_queries):
+                # Check if we should stop
+                if stop_time is not None and time.time() >= stop_time:
+                    self.logger.info(
+                        f"[{self.agent_id}] ({self.persona_name}) Stopping due to time limit. "
+                        f"Executed {total_queries_executed} total queries across {cycle_count} cycle(s)."
+                    )
+                    break
+                
+                # Timestamp before sending (with nanosecond precision)
+                time_sent_ns = time.time_ns()
+                timestamp_sent = datetime.now().isoformat()
+                time_sent = time.time()
+                
+                # Execute query (synchronous - waits for response before continuing)
+                result = self._execute_query(query)
+                total_queries_executed += 1
+                
+                # Timestamp after receiving (with nanosecond precision)
+                time_received_ns = time.time_ns()
+                timestamp_received = datetime.now().isoformat()
+                time_received = time.time()
+                elapsed_ms = (time_received - time_sent) * 1000
+                elapsed_ns = time_received_ns - time_sent_ns
+                
+                # Extract row count if available
+                row_count = 0
+                if result.get("success"):
+                    result_data = result.get("result", {})
+                    result_array = result_data.get("Result", [])
+                    if isinstance(result_array, list):
+                        row_count = len(result_array)
+                
+                # Store detailed execution result with FULL query and nanosecond precision
+                execution_detail = {
+                    "transaction_id": self.transaction_counter,
+                    "query_index": total_queries_executed,
+                    "cycle": cycle_count,
+                    "original_query_index": idx + 1,
+                    "timestamp_sent": timestamp_sent,
+                    "timestamp_sent_ns": time_sent_ns,
+                    "timestamp_received": timestamp_received,
+                    "timestamp_received_ns": time_received_ns,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "elapsed_ns": elapsed_ns,
+                    "statement": query,  # FULL query, no truncation
+                    "status": "success" if result.get("success") else "error",
+                    "error_message": result.get("error", "") if not result.get("success") else "",
+                    "response_count": row_count
+                }
+                
+                self.execution_results.append(execution_detail)
+                
+                # Think time between queries
+                # When think_time_range is (0, 0), no delay - but queries still execute synchronously
+                if think_time_range != (0, 0):
+                    think_time = random.uniform(*think_time_range)
+                    time.sleep(think_time)
+            else:
+                # Inner for loop completed without break - check if we should continue cycling
+                if stop_time is None:
+                    # No time limit, just run once
+                    break
+                elif time.time() >= stop_time:
+                    # Time's up
+                    break
+                # Otherwise, continue to next cycle
+                continue
             
-            # Execute query (synchronous - waits for response before continuing)
-            result = self._execute_query(query)
-            
-            # Timestamp after receiving (with nanosecond precision)
-            time_received_ns = time.time_ns()
-            timestamp_received = datetime.now().isoformat()
-            time_received = time.time()
-            elapsed_ms = (time_received - time_sent) * 1000
-            elapsed_ns = time_received_ns - time_sent_ns
-            
-            # Extract row count if available
-            row_count = 0
-            if result.get("success"):
-                result_data = result.get("result", {})
-                result_array = result_data.get("Result", [])
-                if isinstance(result_array, list):
-                    row_count = len(result_array)
-            
-            # Store detailed execution result with FULL query and nanosecond precision
-            execution_detail = {
-                "transaction_id": self.transaction_counter,
-                "query_index": idx + 1,
-                "timestamp_sent": timestamp_sent,
-                "timestamp_sent_ns": time_sent_ns,
-                "timestamp_received": timestamp_received,
-                "timestamp_received_ns": time_received_ns,
-                "elapsed_ms": round(elapsed_ms, 2),
-                "elapsed_ns": elapsed_ns,
-                "statement": query,  # FULL query, no truncation
-                "status": "success" if result.get("success") else "error",
-                "error_message": result.get("error", "") if not result.get("success") else "",
-                "response_count": row_count
-            }
-            
-            self.execution_results.append(execution_detail)
-            
-            # Think time between queries (except for last one)
-            # When think_time_range is (0, 0), no delay - but queries still execute synchronously
-            if idx < len(self.pregenerated_queries) - 1 and think_time_range != (0, 0):
-                think_time = random.uniform(*think_time_range)
-                time.sleep(think_time)
+            # Inner for loop was broken (time limit reached), exit outer while loop
+            break
         
         session_duration = time.time() - session_start_time
         
@@ -265,5 +293,5 @@ class BaseAgent:
         
         self.logger.info(
             f"[{self.agent_id}] ({self.persona_name}) Pre-generated session complete. "
-            f"Executed {len(self.pregenerated_queries)} queries in {session_duration:.1f}s"
+            f"Executed {total_queries_executed} queries across {cycle_count} cycle(s) in {session_duration:.1f}s"
         )
