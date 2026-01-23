@@ -64,7 +64,8 @@ class FirestormOrchestrator:
         setup_env: bool = True,
         no_delay: bool = False,
         uniform_delay_ms: Optional[int] = None,
-        batch_conns: int = 10
+        batch_conns: int = 10,
+        read_only: bool = False
     ):
         self.num_agents = num_agents
         self.duration_seconds = duration_minutes * 60
@@ -75,6 +76,7 @@ class FirestormOrchestrator:
         self.no_delay = no_delay
         self.uniform_delay_ms = uniform_delay_ms
         self.batch_conns = batch_conns
+        self.read_only = read_only
         
         self.agents: List[Any] = []
         self.agent_threads: List[threading.Thread] = []
@@ -196,6 +198,50 @@ class FirestormOrchestrator:
             logger.info(f"   Loaded {len(queries)} queries for {agent.agent_id}")
         
         logger.info(f"✅ Loaded {total_loaded} total queries from files")
+        
+        # Apply read-only filter if enabled
+        if self.read_only:
+            self.filter_queries_for_read_only()
+    
+    def filter_queries_for_read_only(self):
+        """Filter agent queries to only include SELECT statements (read-only mode)"""
+        logger.info("🔒 READ-ONLY MODE: Filtering out write operations (ADD, UPDATE, DELETE)...")
+        
+        total_original = 0
+        total_filtered = 0
+        
+        for agent in self.agents:
+            if not hasattr(agent, 'pregenerated_queries') or not agent.pregenerated_queries:
+                continue
+            
+            original_count = len(agent.pregenerated_queries)
+            total_original += original_count
+            
+            # Filter to only SELECT queries (case-insensitive check)
+            # Exclude ADD, UPDATE, DELETE operations
+            filtered_queries = []
+            for query in agent.pregenerated_queries:
+                query_upper = query.strip().upper()
+                # Only keep SELECT queries, exclude write operations
+                if query_upper.startswith('SELECT'):
+                    filtered_queries.append(query)
+                # Also allow SHOW commands (read-only metadata queries)
+                elif query_upper.startswith('SHOW'):
+                    filtered_queries.append(query)
+            
+            agent.pregenerated_queries = filtered_queries
+            filtered_count = len(filtered_queries)
+            total_filtered += filtered_count
+            
+            removed = original_count - filtered_count
+            if removed > 0:
+                logger.info(f"   {agent.agent_id}: Kept {filtered_count}/{original_count} queries (removed {removed} write operations)")
+        
+        removed_total = total_original - total_filtered
+        logger.info(f"🔒 READ-ONLY: Kept {total_filtered}/{total_original} queries total (removed {removed_total} write operations)")
+        
+        if total_filtered == 0:
+            logger.warning("⚠️  WARNING: No SELECT queries remaining after read-only filtering!")
     
     def write_startup_manifest(self, include_query_files: bool = False):
         """Write startup configuration to JSON file"""
@@ -378,6 +424,8 @@ class FirestormOrchestrator:
         logger.info(f"Agents: {self.num_agents}")
         logger.info(f"Duration: {self.duration_seconds / 60:.1f} minutes")
         logger.info(f"Target: {self.syndrdb_host}:{self.syndrdb_port}")
+        if self.read_only:
+            logger.info("🔒 Mode: READ-ONLY (SELECT queries only)")
         logger.info("")
         logger.info("Startup Sequence:")
         logger.info(f"  0. ✓ Created {self.num_agents} agents")
@@ -724,6 +772,12 @@ def parse_args():
         help='Number of agents to connect simultaneously in each batch (default: 10)'
     )
     
+    parser.add_argument(
+        '--read-only',
+        action='store_true',
+        help='Only execute SELECT queries (no ADD, UPDATE, or DELETE operations)'
+    )
+    
     return parser.parse_args()
 
 
@@ -758,7 +812,8 @@ def main():
         setup_env=not args.no_setup,
         no_delay=args.no_delay,
         uniform_delay_ms=args.uniform_delay,
-        batch_conns=args.batch_conns
+        batch_conns=args.batch_conns,
+        read_only=args.read_only
     )
     
     try:
@@ -829,6 +884,10 @@ def main():
             
             # Pre-generate queries for all agents
             orchestrator.pregenerate_queries()
+            
+            # Apply read-only filter if enabled
+            if orchestrator.read_only:
+                orchestrator.filter_queries_for_read_only()
             
             # Write startup manifest
             orchestrator.write_startup_manifest()
