@@ -65,7 +65,8 @@ class FirestormOrchestrator:
         no_delay: bool = False,
         uniform_delay_ms: Optional[int] = None,
         batch_conns: int = 10,
-        read_only: bool = False
+        read_only: bool = False,
+        write_only: bool = False
     ):
         self.num_agents = num_agents
         self.duration_seconds = duration_minutes * 60
@@ -77,6 +78,7 @@ class FirestormOrchestrator:
         self.uniform_delay_ms = uniform_delay_ms
         self.batch_conns = batch_conns
         self.read_only = read_only
+        self.write_only = write_only
         
         self.agents: List[Any] = []
         self.agent_threads: List[threading.Thread] = []
@@ -202,6 +204,10 @@ class FirestormOrchestrator:
         # Apply read-only filter if enabled
         if self.read_only:
             self.filter_queries_for_read_only()
+        
+        # Apply write-only filter if enabled
+        if self.write_only:
+            self.filter_queries_for_write_only()
     
     def filter_queries_for_read_only(self):
         """Filter agent queries to only include SELECT statements (read-only mode)"""
@@ -242,6 +248,47 @@ class FirestormOrchestrator:
         
         if total_filtered == 0:
             logger.warning("⚠️  WARNING: No SELECT queries remaining after read-only filtering!")
+    
+    def filter_queries_for_write_only(self):
+        """Filter agent queries to only include write operations (write-only mode)"""
+        logger.info("✏️  WRITE-ONLY MODE: Filtering out read operations (SELECT, SHOW)...")
+        
+        total_original = 0
+        total_filtered = 0
+        
+        for agent in self.agents:
+            if not hasattr(agent, 'pregenerated_queries') or not agent.pregenerated_queries:
+                continue
+            
+            original_count = len(agent.pregenerated_queries)
+            total_original += original_count
+            
+            # Filter to only write queries (case-insensitive check)
+            # Keep ADD, UPDATE, DELETE operations
+            filtered_queries = []
+            for query in agent.pregenerated_queries:
+                query_upper = query.strip().upper()
+                # Only keep write operations
+                if query_upper.startswith('ADD'):
+                    filtered_queries.append(query)
+                elif query_upper.startswith('UPDATE'):
+                    filtered_queries.append(query)
+                elif query_upper.startswith('DELETE'):
+                    filtered_queries.append(query)
+            
+            agent.pregenerated_queries = filtered_queries
+            filtered_count = len(filtered_queries)
+            total_filtered += filtered_count
+            
+            removed = original_count - filtered_count
+            if removed > 0:
+                logger.info(f"   {agent.agent_id}: Kept {filtered_count}/{original_count} queries (removed {removed} read operations)")
+        
+        removed_total = total_original - total_filtered
+        logger.info(f"✏️  WRITE-ONLY: Kept {total_filtered}/{total_original} queries total (removed {removed_total} read operations)")
+        
+        if total_filtered == 0:
+            logger.warning("⚠️  WARNING: No write queries remaining after write-only filtering!")
     
     def write_startup_manifest(self, include_query_files: bool = False):
         """Write startup configuration to JSON file"""
@@ -426,6 +473,8 @@ class FirestormOrchestrator:
         logger.info(f"Target: {self.syndrdb_host}:{self.syndrdb_port}")
         if self.read_only:
             logger.info("🔒 Mode: READ-ONLY (SELECT queries only)")
+        elif self.write_only:
+            logger.info("✏️  Mode: WRITE-ONLY (ADD/UPDATE/DELETE queries only)")
         logger.info("")
         logger.info("Startup Sequence:")
         logger.info(f"  0. ✓ Created {self.num_agents} agents")
@@ -778,6 +827,12 @@ def parse_args():
         help='Only execute SELECT queries (no ADD, UPDATE, or DELETE operations)'
     )
     
+    parser.add_argument(
+        '--write-only',
+        action='store_true',
+        help='Only execute write queries (ADD, UPDATE, DELETE - no SELECT operations)'
+    )
+    
     return parser.parse_args()
 
 
@@ -802,6 +857,14 @@ def main():
         logger.error("❌ Cannot use --no-delay and --uniform-delay together")
         sys.exit(1)
     
+    # Validate read-only and write-only mutual exclusion
+    if args.read_only and args.write_only:
+        logger.error("❌ Cannot use --read-only and --write-only together")
+        logger.error("   Use --read-only for SELECT queries only")
+        logger.error("   Use --write-only for ADD/UPDATE/DELETE queries only")
+        logger.error("   Leave both off to allow mixed read and write operations")
+        sys.exit(1)
+    
     # Create orchestrator
     orchestrator = FirestormOrchestrator(
         num_agents=args.agents,
@@ -813,7 +876,8 @@ def main():
         no_delay=args.no_delay,
         uniform_delay_ms=args.uniform_delay,
         batch_conns=args.batch_conns,
-        read_only=args.read_only
+        read_only=args.read_only,
+        write_only=args.write_only
     )
     
     try:
@@ -888,6 +952,10 @@ def main():
             # Apply read-only filter if enabled
             if orchestrator.read_only:
                 orchestrator.filter_queries_for_read_only()
+            
+            # Apply write-only filter if enabled
+            if orchestrator.write_only:
+                orchestrator.filter_queries_for_write_only()
             
             # Write startup manifest
             orchestrator.write_startup_manifest()
