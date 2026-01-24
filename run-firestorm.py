@@ -443,7 +443,20 @@ class FirestormOrchestrator:
             agent.logger.info(f"[{agent.agent_id}] All agents ready - starting query execution!")
             
             # Check if agent has pre-generated queries
-            if hasattr(agent, 'pregenerated_queries') and agent.pregenerated_queries:
+            # NOTE: We check hasattr separately from truthiness because after filtering
+            # (e.g., --write-only or --read-only), the list might be empty.
+            # An empty list should NOT fall back to runtime generation, which would bypass filtering.
+            has_pregenerated = hasattr(agent, 'pregenerated_queries') and agent.pregenerated_queries is not None
+            
+            if has_pregenerated:
+                if len(agent.pregenerated_queries) == 0:
+                    # Filtered to empty - skip this agent (no matching queries for mode)
+                    agent.logger.warning(
+                        f"[{agent.agent_id}] No queries remaining after filtering. "
+                        f"Skipping agent (read-only={self.read_only}, write-only={self.write_only})"
+                    )
+                    return
+                
                 # Use pre-generated query execution mode
                 from agents.personas import PERSONAS
                 persona = PERSONAS.get(agent.persona_name, {})
@@ -461,6 +474,14 @@ class FirestormOrchestrator:
                 agent.run_pregenerated_session(think_time_range=think_time_range, stop_time=stop_time, skip_connect=True)
             else:
                 # Fall back to original runtime generation mode
+                # NOTE: This path should NOT be used with --read-only or --write-only
+                # as runtime generation bypasses query filtering
+                if self.read_only or self.write_only:
+                    agent.logger.error(
+                        f"[{agent.agent_id}] Cannot use runtime query generation with "
+                        f"--read-only or --write-only modes. Pre-generate queries first with --test-gen"
+                    )
+                    return
                 agent.run_session(duration_minutes=(stop_time - time.time()) / 60)
         except Exception as e:
             logger.error(f"Agent {agent.agent_id} crashed: {e}")
