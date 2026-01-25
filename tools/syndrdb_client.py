@@ -41,32 +41,37 @@ class SyndrDBClient:
             conn_str = f"syndrdb://{self.host}:{self.port}:{self.db}:{self.user}:{self.password}\x04"
             self.socket.sendall(conn_str.encode('utf-8'))
             
-            # Receive welcome message (plain text, terminated by newline)
-            welcome_data = b''
-            while True:
-                chunk = self.socket.recv(4096)
-                if not chunk:
-                    raise Exception("Connection closed before receiving welcome message")
-                welcome_data += chunk
-                if b'\n' in welcome_data:
-                    welcome_msg = welcome_data.split(b'\n')[0].decode('utf-8')
-                    logger.info(f"Received welcome: {welcome_msg}")
-                    break
+            # Receive both welcome message and auth response
+            # They may arrive in the same packet, so we need to handle buffered data
+            buffer = b''
+            welcome_msg = None
+            auth_msg = None
             
-            # Receive authentication response (JSON, terminated by newline)
-            auth_data = b''
-            while True:
+            # Keep reading until we have both messages
+            while welcome_msg is None or auth_msg is None:
                 chunk = self.socket.recv(4096)
                 if not chunk:
-                    raise Exception("Connection closed before receiving auth response")
-                auth_data += chunk
-                if b'\n' in auth_data:
-                    auth_json = auth_data.split(b'\n')[0].decode('utf-8')
-                    auth_msg = json.loads(auth_json)
-                    if auth_msg.get("status") == "error":
-                        raise Exception(f"Authentication failed: {auth_msg.get('message', 'Unknown error')}")
-                    logger.info(f"Authentication successful")
-                    break
+                    raise Exception("Connection closed before receiving all responses")
+                buffer += chunk
+                
+                # Process all complete lines in buffer
+                while b'\n' in buffer:
+                    line, buffer = buffer.split(b'\n', 1)  # Split only on first newline, keep rest
+                    line_str = line.decode('utf-8').strip()
+                    
+                    if welcome_msg is None:
+                        # First line is the welcome message
+                        welcome_msg = line_str
+                        logger.info(f"Received welcome: {welcome_msg}")
+                    elif auth_msg is None:
+                        # Second line is the auth response (JSON)
+                        try:
+                            auth_msg = json.loads(line_str)
+                            if auth_msg.get("status") == "error":
+                                raise Exception(f"Authentication failed: {auth_msg.get('message', 'Unknown error')}")
+                            logger.info(f"Authentication successful")
+                        except json.JSONDecodeError as e:
+                            raise Exception(f"Invalid auth response: {line_str[:100]}")
             
             self.connected = True
             logger.info(f"Connected to SyndrDB at {self.host}:{self.port}")
