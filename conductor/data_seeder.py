@@ -4,29 +4,28 @@ import logging
 import json
 from datetime import datetime, timedelta
 from faker import Faker
+from conductor.expanded_categories import (
+    PRODUCT_CATEGORIES, 
+    RATING_VALUES, 
+    STOCK_RANGES, 
+    PRICE_RANGES,
+    ORDER_STATUSES
+)
 
 logger = logging.getLogger(__name__)
 
 class DataSeeder:
-    """Seeds test data into SyndrDB using Faker for realistic data"""
+    """Seeds test data into SyndrDB using Faker for realistic data with high entropy"""
     
     def __init__(self, db_client):
         self.db = db_client
         self.faker = Faker()
         
-        # Product categories for e-commerce
-        self.categories = [
-            "Electronics", "Computers", "Smartphones", "Audio",
-            "Clothing", "Shoes", "Accessories", "Jewelry",
-            "Home & Garden", "Furniture", "Kitchen", "Bedding",
-            "Books", "Movies", "Music", "Games",
-            "Toys", "Baby", "Kids", "Education",
-            "Sports", "Outdoors", "Fitness", "Cycling",
-            "Beauty", "Health", "Personal Care", "Vitamins"
-        ]
+        # Use expanded 350+ categories for maximum entropy
+        self.categories = PRODUCT_CATEGORIES
         
-        # Order statuses
-        self.order_statuses = ["pending", "processing", "shipped", "delivered", "cancelled"]
+        # Use expanded order statuses for more variety
+        self.order_statuses = ORDER_STATUSES
         
         # Store parent DocumentIDs for foreign key relationships
         self.user_doc_ids = []
@@ -84,7 +83,7 @@ class DataSeeder:
                 logger.warning(f"Failed to extract DocumentID from user insert: {e}")
     
     def seed_products(self, count: int):
-        """Seed products with realistic names and data from Faker"""
+        """Seed products with realistic names and high entropy data"""
         logger.info(f"Seeding {count} products...")
         
         # Clear existing product IDs if reseeding
@@ -94,10 +93,20 @@ class DataSeeder:
         for i in range(count):
             # Generate realistic product names
             name = self.faker.catch_phrase()
-            price = round(random.uniform(5.0, 2000.0), 2)
+            
+            # Use more granular price ranges for variety
+            price_range = random.choice(PRICE_RANGES)
+            price = round(random.uniform(price_range[0], price_range[1]), 2)
+            
+            # Use expanded 350+ categories
             category = random.choice(self.categories)
-            stock = random.randint(0, 500)
-            rating = round(random.uniform(1.0, 5.0), 1)
+            
+            # Use more granular stock ranges
+            stock_range = random.choice(STOCK_RANGES)
+            stock = random.randint(stock_range[0], stock_range[1])
+            
+            # Use discrete rating values for better variety
+            rating = random.choice(RATING_VALUES)
             created = self.faker.date_time_between(start_date='-2y', end_date='now').isoformat()
             
             query = f'''ADD DOCUMENT TO BUNDLE "products"

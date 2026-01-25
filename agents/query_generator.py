@@ -13,12 +13,21 @@ import json
 from typing import List, Dict, Any, Optional
 from agents.personas import PERSONAS
 from agents.syndrql_validator import validate_query
+from conductor.expanded_categories import (
+    PRODUCT_CATEGORIES,
+    RATING_VALUES,
+    STOCK_RANGES,
+    PRICE_RANGES,
+    ORDER_STATUSES,
+    get_random_category,
+    get_random_category_subset
+)
 
 logger = logging.getLogger(__name__)
 
 
 class QueryGenerator:
-    """Generates pre-validated SyndrQL queries for agents"""
+    """Generates pre-validated SyndrQL queries for agents with high entropy"""
     
     def __init__(
         self,
@@ -46,6 +55,10 @@ class QueryGenerator:
         
         self.persona = PERSONAS[persona_name]
         self.query_breakdown = self.persona["query_breakdown"]
+        
+        # Agent-specific category subset (10-20 categories per agent)
+        # This dramatically reduces overlap between agents
+        self.agent_categories = get_random_category_subset(random.randint(15, 25))
         
         # Track statistics
         self.generation_attempts = 0
@@ -342,20 +355,52 @@ Return ONLY the SyndrQL query, nothing else."""
         elif "create" in action_name or action_name == "create_document":
             return {
                 "bundle": random.choice(["products", "users", "orders"]),
-                "count": self._get_count_for_action(action_name)
+                "count": self._get_count_for_action(action_name),
+                "use_agent_categories": True  # Flag to use agent-specific categories
             }
         
         elif "update" in action_name or action_name == "update_documents":
+            # Use agent-specific categories and add rating/stock filters for more specificity
+            category = random.choice(self.agent_categories)
+            
+            # Add additional filter dimensions to reduce overlap
+            additional_filters = []
+            if random.random() < 0.5:  # 50% chance of adding rating filter
+                rating = random.choice(RATING_VALUES)
+                additional_filters.append(f'("rating" <= {rating})')
+            if random.random() < 0.5:  # 50% chance of adding stock filter
+                stock_range = random.choice(STOCK_RANGES)
+                additional_filters.append(f'("stock" >= {stock_range[0]} AND "stock" <= {stock_range[1]})')
+            
+            # Build WHERE clause with category + optional filters
+            where_parts = [f'("category" == "{category}")']
+            where_parts.extend(additional_filters)
+            where = " AND ".join(where_parts)
+            
             return {
                 "bundle": "products",
-                "where": f'("category" == "{random.choice(["Electronics", "Clothing", "Home"])}")',
+                "where": where,
                 "count": self._get_count_for_action(action_name)
             }
         
         elif "delete" in action_name or action_name == "delete_documents":
+            # Add more specificity to DELETE queries to reduce overlap
+            # Vary by rating ranges and add randomization
+            rating_threshold = random.choice([1, 2])  # Delete 1-star or 1-2 star reviews
+            
+            # Optionally add date filters
+            additional_filters = []
+            if random.random() < 0.3:  # 30% chance of date filter
+                days_ago = random.randint(30, 365)
+                additional_filters.append(f'("created_at" < DATE_SUB(NOW(), INTERVAL {days_ago} DAY))')
+            
+            where_parts = [f'("rating" <= {rating_threshold})']
+            where_parts.extend(additional_filters)
+            where = " AND ".join(where_parts) if additional_filters else f'("rating" <= {rating_threshold})'
+            
             return {
                 "bundle": "reviews",
-                "where": f'("rating" <= 2)',
+                "where": where,
                 "count": self._get_count_for_action(action_name)
             }
         
@@ -484,31 +529,43 @@ Return ONLY the SyndrQL query, nothing else."""
         elif action_name in ["create_document", "bulk_create"]:
             bundle = params.get("bundle", "products")
             count = params.get("count", 1)
+            use_agent_categories = params.get("use_agent_categories", False)
             
             if bundle == "products":
+                # Use agent-specific categories and realistic ranges
+                category = random.choice(self.agent_categories) if use_agent_categories else get_random_category()
+                price_range = random.choice(PRICE_RANGES)
+                price = round(random.uniform(price_range[0], price_range[1]), 2)
+                stock_range = random.choice(STOCK_RANGES)
+                stock = random.randint(stock_range[0], stock_range[1])
+                
                 return f'''ADD DOCUMENT TO BUNDLE "products"
                           WITH (
-                              {{\"name\" = "Product {random.randint(1000,99999)}"}},
-                              {{\"price\" = {random.uniform(10, 500):.2f}}},
-                              {{\"category\" = "{random.choice(["Electronics", "Clothing", "Home"])}"}},
-                              {{\"stock\" = {random.randint(10, 1000)}}}
+                              {{\"name\" = "Product {random.randint(1000,999999)}"}},
+                              {{\"price\" = {price}}},
+                              {{\"category\" = "{category}"}},
+                              {{\"stock\" = {stock}}}
                           );'''
             elif bundle == "users":
                 return f'''ADD DOCUMENT TO BUNDLE "users"
                           WITH (
-                              {{\"name\" = "User {random.randint(1000,99999)}"}},
-                              {{\"email\" = "user{random.randint(1000,99999)}@example.com"}}
+                              {{\"name\" = "User {random.randint(1000,999999)}"}},
+                              {{\"email\" = "user{random.randint(1000,999999)}@example.com"}}
                           );'''
             elif bundle == "orders":
                 # Use real document IDs from seeding
                 user_ids = self.document_ids.get("user_document_ids", [])
                 user_id = random.choice(user_ids) if user_ids else "unknown_user"
                 
+                # Use expanded order statuses
+                status = random.choice(ORDER_STATUSES)
+                total = round(random.uniform(50, 500), 2)
+                
                 return f'''ADD DOCUMENT TO BUNDLE "orders"
                           WITH (
                               {{\"user_id\" = "{user_id}"}},
-                              {{\"total\" = {random.uniform(50, 500):.2f}}},
-                              {{\"status\" = "{random.choice(["pending", "completed", "cancelled"])}"}}
+                              {{\"total\" = {total}}},
+                              {{\"status\" = "{status}"}}
                           );'''
             else:
                 return f'''ADD DOCUMENT TO BUNDLE "{bundle}"
@@ -519,8 +576,12 @@ Return ONLY the SyndrQL query, nothing else."""
             bundle = params.get("bundle", "products")
             where = params.get("where", '("id" > 0)')
             
+            # Use more varied update values
+            stock_range = random.choice(STOCK_RANGES)
+            new_stock = random.randint(stock_range[0], stock_range[1])
+            
             return f'''UPDATE DOCUMENTS IN BUNDLE "{bundle}"
-                      ("stock" = {random.randint(50, 200)})
+                      ("stock" = {new_stock})
                       WHERE {where};'''
         
         # DELETE operations
