@@ -66,7 +66,8 @@ class FirestormOrchestrator:
         uniform_delay_ms: Optional[int] = None,
         batch_conns: int = 10,
         read_only: bool = False,
-        write_only: bool = False
+        write_only: bool = False,
+        connection_timeout: int = 60
     ):
         self.num_agents = num_agents
         self.duration_seconds = duration_minutes * 60
@@ -79,6 +80,7 @@ class FirestormOrchestrator:
         self.batch_conns = batch_conns
         self.read_only = read_only
         self.write_only = write_only
+        self.connection_timeout = connection_timeout
         
         self.agents: List[Any] = []
         self.agent_threads: List[threading.Thread] = []
@@ -367,7 +369,8 @@ class FirestormOrchestrator:
             syndrdb_host=self.syndrdb_host,
             syndrdb_port=self.syndrdb_port,
             syndrdb_database=self.conductor.test_database,
-            ollama_url=self.ollama_url
+            ollama_url=self.ollama_url,
+            connection_timeout=self.connection_timeout
         )
     
     def connect_all_agents(self):
@@ -430,6 +433,11 @@ class FirestormOrchestrator:
         
         logger.info(f"✅ All {connected_count} agents successfully connected to SyndrDB!")
         logger.info("   Agents are ready to send queries (waiting for all threads to start).")
+        
+        # Disable auto-reconnect during test to prevent race conditions
+        for agent in self.agents:
+            agent.db_client.allow_auto_reconnect = False
+        logger.info("   Auto-reconnect disabled for test integrity")
     
     def _run_agent(self, agent, start_barrier: threading.Barrier):
         """Run a single agent until stop_time is reached"""
@@ -503,7 +511,13 @@ class FirestormOrchestrator:
         logger.info("  2. Connecting all agents to SyndrDB...")
         
         # Connect all agents first - everyone must be connected before any can send queries
-        self.connect_all_agents()
+        try:
+            self.connect_all_agents()
+        except Exception as e:
+            logger.error(f"❌ ABORTING TEST: Agent connection failed: {e}")
+            logger.error("   Some agents could not connect within timeout period")
+            logger.error("   Ensure SyndrDB is running and can handle concurrent connections")
+            raise
         
         logger.info("  3. Starting query execution for all agents...")
         logger.info("")
@@ -529,6 +543,13 @@ class FirestormOrchestrator:
             logger.info(f"Started thread for {agent.agent_id} ({agent.persona_name})")
         
         logger.info(f"✅ All {len(self.agents)} agent threads started - synchronizing at barrier...")
+        
+        # Final verification: Ensure all agents are still connected before releasing barrier
+        disconnected = [a.agent_id for a in self.agents if not a.db_client.connected]
+        if disconnected:
+            logger.error(f"❌ ABORTING: Agents lost connection before barrier: {disconnected}")
+            raise Exception(f"Agents disconnected before test start: {disconnected}")
+        logger.info("   Final connection check: All agents still connected ✓")
         
         # Set the actual test timing RIGHT BEFORE releasing the barrier
         # This ensures all agents get the exact same stop_time when they start
@@ -843,6 +864,13 @@ def parse_args():
     )
     
     parser.add_argument(
+        '--connection-timeout',
+        type=int,
+        default=60,
+        help='Connection timeout in seconds for each agent (default: 60)'
+    )
+    
+    parser.add_argument(
         '--read-only',
         action='store_true',
         help='Only execute SELECT queries (no ADD, UPDATE, or DELETE operations)'
@@ -898,7 +926,8 @@ def main():
         uniform_delay_ms=args.uniform_delay,
         batch_conns=args.batch_conns,
         read_only=args.read_only,
-        write_only=args.write_only
+        write_only=args.write_only,
+        connection_timeout=args.connection_timeout
     )
     
     try:

@@ -18,14 +18,15 @@ class BaseAgent:
         syndrdb_host: str = "127.0.0.1",
         syndrdb_port: int = 1776,
         syndrdb_database: str = "primary",
-        ollama_url: str = "http://localhost:11434"
+        ollama_url: str = "http://localhost:11434",
+        connection_timeout: int = 60
     ):
         self.agent_id = agent_id
         self.persona_name = persona_name
         self.ollama_url = ollama_url
         # Use connection string format with credentials
         conn_str = f"syndrdb://{syndrdb_host}:{syndrdb_port}:{syndrdb_database}:root:root"
-        self.db_client = SyndrDBClient(conn_str)
+        self.db_client = SyndrDBClient(conn_str, timeout=connection_timeout)
         
         # Set up per-agent logger with dedicated file
         self.logger = self._setup_agent_logger()

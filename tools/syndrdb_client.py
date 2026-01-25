@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class SyndrDBClient:
     """TCP client for SyndrDB connection"""
     
-    def __init__(self, connStr: str = "syndrdb://localhost:1776:primary:root:root", timeout: int = 30):
+    def __init__(self, connStr: str = "syndrdb://localhost:1776:primary:root:root", timeout: int = 60):
         parts = connStr.split("://")[-1].split(":")
         host = parts[0] if len(parts) > 0 else "localhost"
         port = int(parts[1]) if len(parts) > 1 else 1776
@@ -26,6 +26,7 @@ class SyndrDBClient:
         self.timeout = timeout
         self.socket:  Optional[socket.socket] = None
         self.connected = False
+        self.allow_auto_reconnect = True  # Can be disabled to prevent reconnects during tests
         self._lock = threading.Lock()  # Ensure thread-safe socket operations
         
     def connect(self) -> bool:
@@ -70,6 +71,16 @@ class SyndrDBClient:
             self.connected = True
             logger.info(f"Connected to SyndrDB at {self.host}:{self.port}")
             return True
+        except socket.timeout:
+            logger.error(f"Connection timeout after {self.timeout}s: {self.host}:{self.port}")
+            self.connected = False
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+            return False
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             self.connected = False
@@ -86,8 +97,12 @@ class SyndrDBClient:
         # Use lock to ensure atomic send/receive operations
         with self._lock:
             if not self.connected:
-                if not self.connect():
-                    return {"error": "Not connected", "success": False}
+                if self.allow_auto_reconnect:
+                    logger.warning("Connection lost, attempting to reconnect...")
+                    if not self.connect():
+                        return {"error": "Not connected and reconnect failed", "success": False}
+                else:
+                    return {"error": "Not connected (auto-reconnect disabled)", "success": False}
             
             start_time = time.time()
             
@@ -123,10 +138,19 @@ class SyndrDBClient:
                 }
                 
             except socket.timeout:
+                self.connected = False  # Mark as disconnected on timeout
                 return {
                     "success": False,
                     "error": "Query timeout",
                     "latency_ms": (time.time() - start_time) * 1000,
+                    "query": query
+                }
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
+                self.connected = False  # Mark as disconnected on connection errors
+                logger.error(f"Connection lost during query: {e}")
+                return {
+                    "success": False,
+                    "error": f"Connection lost: {str(e)}",
                     "query": query
                 }
             except Exception as e: 
