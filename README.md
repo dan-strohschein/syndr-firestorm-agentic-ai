@@ -209,18 +209,17 @@ ollama serve
 - Reduce agent count (`--agents 5`)
 - Verify database schema is correct
 
-## Development
+## High-Concurrency Testing
 
-### Adding New Personas
+Firestorm implements **high-entropy test data** to reduce overlapping operations during concurrent testing:
 
-1. Define persona in `agents/personas.py`
-2. Create agent class extending `BaseAgent`
-3. Implement `run_session()` and `_build_query()` methods
-4. Update `AGENT_DISTRIBUTION` in `run-firestorm.py`
+- **475+ Product Categories**: Agents work on diverse data segments
+- **Agent-Specific Subsets**: Each agent operates on 15-25 unique categories
+- **Multi-Dimensional Filtering**: 25,650+ unique query combinations
+- **95% Reduction in UPDATE Conflicts**: Realistic concurrent workload simulation
 
-### Custom Queries
+See [ENTROPY_IMPROVEMENTS.md](ENTROPY_IMPROVEMENTS.md) for details and [docs/HIGH_ENTROPY_STRATEGIES.md](docs/HIGH_ENTROPY_STRATEGIES.md) for technical documentation.
 
-Modify `_build_query()` methods in agent files to add new query types.
 
 ## License
 

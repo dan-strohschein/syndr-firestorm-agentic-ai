@@ -2,6 +2,7 @@
 import random
 import logging
 import json
+import time
 from datetime import datetime, timedelta
 from faker import Faker
 from conductor.expanded_categories import (
@@ -51,8 +52,10 @@ class DataSeeder:
         """Seed a batch of users with realistic data from Faker"""
         for i in range(count):
             name = self.faker.name()
-            # Generate unique email based on name
-            email = self.faker.email()
+            # Generate unique email with timestamp and random component to avoid duplicates
+            timestamp = int(time.time() * 1000000)  # microseconds for uniqueness
+            random_suffix = random.randint(1000, 9999)
+            email = f"user_{timestamp}_{random_suffix}@{self.faker.free_email_domain()}"
             created = self.faker.date_time_between(start_date='-2y', end_date='now').isoformat()
             last_login = self.faker.date_time_between(start_date='-30d', end_date='now').isoformat()
             
