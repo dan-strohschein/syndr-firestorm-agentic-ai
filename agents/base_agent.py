@@ -36,6 +36,7 @@ class BaseAgent:
         self.successful_queries = 0
         self.failed_queries = 0
         self.total_latency = 0
+        self.total_server_execution_ms = 0.0  # Sum of all ServerExecutionMS values
         self.errors = []
         self.transaction_counter = 0  # For tracking individual query executions
 
@@ -123,7 +124,9 @@ class BaseAgent:
             server_exec_time = "MISSING"
             if "result" in result and isinstance(result["result"], dict):
                 if "ExecutionTimeMS" in result["result"]:
-                    server_exec_time = f"{result['result']['ExecutionTimeMS']:.4f}"
+                    server_exec_ms = result['result']['ExecutionTimeMS']
+                    server_exec_time = f"{server_exec_ms:.4f}"
+                    self.total_server_execution_ms += server_exec_ms
             
             self.logger.info(f"[{self.agent_id}] TXN-{txn_id} ✓ Success - {result.get('latency_ms', 0):.2f}ms ServerExecutionMS: {server_exec_time}")
         else:
@@ -145,6 +148,12 @@ class BaseAgent:
             else 0
         )
         
+        # Calculate Agent QPS: queries / (total_server_execution_ms / 1000)
+        agent_qps = 0.0
+        if self.total_server_execution_ms > 0:
+            total_server_execution_sec = self.total_server_execution_ms / 1000.0
+            agent_qps = self.queries_executed / total_server_execution_sec
+        
         return {
             "agent_id": self.agent_id,
             "persona":  self.persona_name,
@@ -157,6 +166,7 @@ class BaseAgent:
                 else 0
             ),
             "avg_latency_ms": avg_latency,
+            "agent_qps": agent_qps,
             "error_count": len(self.errors)
         }
     

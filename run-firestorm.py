@@ -657,7 +657,10 @@ class FirestormOrchestrator:
                 "failed_queries": total_failed,
                 "success_rate": (total_successful / total_queries * 100) if total_queries > 0 else 0,
                 "avg_latency_ms": avg_latency,
-                "queries_per_second": total_queries / test_duration if test_duration > 0 else 0
+                "queries_per_second": total_queries / test_duration if test_duration > 0 else 0,
+                "highest_agent_qps": max((m.get("agent_qps", 0) for m in agent_metrics), default=0),
+                "lowest_agent_qps": min((m.get("agent_qps", 0) for m in agent_metrics if m.get("agent_qps", 0) > 0), default=0),
+                "avg_agent_qps": sum(m.get("agent_qps", 0) for m in agent_metrics) / len(agent_metrics) if agent_metrics else 0
             },
             "agent_metrics": agent_metrics
         }
@@ -775,6 +778,10 @@ class FirestormOrchestrator:
         print(f"✅ Success Rate: {agg['success_rate']:.2f}%")
         print(f"✅ Avg Latency: {agg['avg_latency_ms']:.2f} ms")
         print(f"✅ Queries/Second: {agg['queries_per_second']:.2f}")
+        print(f"\n📊 Agent QPS Metrics:")
+        print(f"   🔥 Highest Agent QPS: {agg['highest_agent_qps']:.2f}")
+        print(f"   ❄️  Lowest Agent QPS:  {agg['lowest_agent_qps']:.2f}")
+        print(f"   📈 Average Agent QPS: {agg['avg_agent_qps']:.2f}")
         print("\n" + "=" * 80 + "\n")
 
 

@@ -52,10 +52,10 @@ class DataSeeder:
         """Seed a batch of users with realistic data from Faker"""
         for i in range(count):
             name = self.faker.name()
-            # Generate unique email with timestamp and random component to avoid duplicates
+            # Generate unique email with timestamp, loop counter, and random component to avoid duplicates
             timestamp = int(time.time() * 1000000)  # microseconds for uniqueness
             random_suffix = random.randint(1000, 9999)
-            email = f"user_{timestamp}_{random_suffix}@{self.faker.free_email_domain()}"
+            email = f"user_{timestamp}_{i}_{random_suffix}@{self.faker.free_email_domain()}"
             created = self.faker.date_time_between(start_date='-2y', end_date='now').isoformat()
             last_login = self.faker.date_time_between(start_date='-30d', end_date='now').isoformat()
             
