@@ -118,7 +118,14 @@ class BaseAgent:
         if result.get("success"):
             self.successful_queries += 1
             self.total_latency += result.get("latency_ms", 0)
-            self.logger.info(f"[{self.agent_id}] TXN-{txn_id} ✓ Success - {result.get('latency_ms', 0):.2f}ms")
+            
+            # Extract server execution time from response
+            server_exec_time = "MISSING"
+            if "result" in result and isinstance(result["result"], dict):
+                if "ExecutionTimeMS" in result["result"]:
+                    server_exec_time = f"{result['result']['ExecutionTimeMS']:.4f}"
+            
+            self.logger.info(f"[{self.agent_id}] TXN-{txn_id} ✓ Success - {result.get('latency_ms', 0):.2f}ms ServerExecutionMS: {server_exec_time}")
         else:
             self.failed_queries += 1
             self.errors.append({
