@@ -67,20 +67,33 @@ class DataSeeder:
             result = self.db.execute(query)
             
             # Capture DocumentID from successful insert
+            # Server response structure: {"ExecutionTimeMS": 58.56, "Result": "{\"DocumentID\": \"...\", ...}", "ResultCount": 1}
             try:
-                # Result is nested: result['result']['Result']
-                result_obj = result.get("result", {})
-                result_str = result_obj.get("Result", "{}")
-                if result_str:
-                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
-                    doc_id = result_data.get("DocumentID")
-                    if doc_id:
-                        # Keep a rolling window of ~20 recent user IDs for foreign keys
-                        self.user_doc_ids.append(doc_id)
-                        if len(self.user_doc_ids) > 20:
-                            self.user_doc_ids.pop(0)
+                if not result.get("success"):
+                    logger.error(f"Failed to insert user: {result.get('error', 'Unknown error')}")
+                    continue
+                
+                doc_id = None
+                server_response = result.get("result", {})
+                
+                # Result field contains JSON string with DocumentID
+                if "Result" in server_response:
+                    result_str = server_response["Result"]
+                    if isinstance(result_str, str):
+                        try:
+                            parsed = json.loads(result_str)
+                            doc_id = parsed.get("DocumentID")
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.error(f"Failed to parse Result field: {e}")
+                
+                if doc_id:
+                    self.user_doc_ids.append(doc_id)
+                    if len(self.user_doc_ids) > 20:
+                        self.user_doc_ids.pop(0)
+                else:
+                    logger.error(f"Could not extract DocumentID from user insert. Response: {json.dumps(result, indent=2)[:300]}")
             except Exception as e:
-                logger.warning(f"Failed to extract DocumentID from user insert: {e}")
+                logger.error(f"Exception extracting DocumentID from user insert: {e}")
     
     def seed_products(self, count: int):
         """Seed products with realistic names and high entropy data"""
@@ -122,20 +135,33 @@ class DataSeeder:
             result = self.db.execute(query)
             
             # Capture DocumentID from successful insert
+            # Server response structure: {"ExecutionTimeMS": 58.56, "Result": "{\"DocumentID\": \"...\", ...}", "ResultCount": 1}
             try:
-                # Result is nested: result['result']['Result']
-                result_obj = result.get("result", {})
-                result_str = result_obj.get("Result", "{}")
-                if result_str:
-                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
-                    doc_id = result_data.get("DocumentID")
-                    if doc_id:
-                        # Keep a rolling window of ~20 recent product IDs for foreign keys
-                        self.product_doc_ids.append(doc_id)
-                        if len(self.product_doc_ids) > 20:
-                            self.product_doc_ids.pop(0)
+                if not result.get("success"):
+                    logger.error(f"Failed to insert product: {result.get('error', 'Unknown error')}")
+                    continue
+                
+                doc_id = None
+                server_response = result.get("result", {})
+                
+                # Result field contains JSON string with DocumentID
+                if "Result" in server_response:
+                    result_str = server_response["Result"]
+                    if isinstance(result_str, str):
+                        try:
+                            parsed = json.loads(result_str)
+                            doc_id = parsed.get("DocumentID")
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.error(f"Failed to parse Result field: {e}")
+                
+                if doc_id:
+                    self.product_doc_ids.append(doc_id)
+                    if len(self.product_doc_ids) > 20:
+                        self.product_doc_ids.pop(0)
+                else:
+                    logger.error(f"Could not extract DocumentID from product insert. Response: {json.dumps(result, indent=2)[:300]}")
             except Exception as e:
-                logger.warning(f"Failed to extract DocumentID from product insert: {e}")
+                logger.error(f"Exception extracting DocumentID from product insert: {e}")
         
         logger.info(f"✓ Seeded {count} products. Tracking {len(self.product_doc_ids)} DocumentIDs for relationships")
     
@@ -169,20 +195,33 @@ class DataSeeder:
             result = self.db.execute(query)
             
             # Capture DocumentID for order_items relationship
+            # Server response structure: {"ExecutionTimeMS": 58.56, "Result": "{\"DocumentID\": \"...\", ...}", "ResultCount": 1}
             try:
-                # Result is nested: result['result']['Result']
-                result_obj = result.get("result", {})
-                result_str = result_obj.get("Result", "{}")
-                if result_str:
-                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
-                    doc_id = result_data.get("DocumentID")
-                    if doc_id:
-                        # Keep a rolling window of ~20 recent order IDs for order_items
-                        self.order_doc_ids.append(doc_id)
-                        if len(self.order_doc_ids) > 20:
-                            self.order_doc_ids.pop(0)
+                if not result.get("success"):
+                    logger.error(f"Failed to insert order: {result.get('error', 'Unknown error')}")
+                    continue
+                
+                doc_id = None
+                server_response = result.get("result", {})
+                
+                # Result field contains JSON string with DocumentID
+                if "Result" in server_response:
+                    result_str = server_response["Result"]
+                    if isinstance(result_str, str):
+                        try:
+                            parsed = json.loads(result_str)
+                            doc_id = parsed.get("DocumentID")
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.error(f"Failed to parse Result field: {e}")
+                
+                if doc_id:
+                    self.order_doc_ids.append(doc_id)
+                    if len(self.order_doc_ids) > 20:
+                        self.order_doc_ids.pop(0)
+                else:
+                    logger.error(f"Could not extract DocumentID from order insert. Response: {json.dumps(result, indent=2)[:300]}")
             except Exception as e:
-                logger.warning(f"Failed to extract DocumentID from order insert: {e}")
+                logger.error(f"Exception extracting DocumentID from order insert: {e}")
         
         logger.info(f"✓ Seeded {count} orders. Tracking {len(self.order_doc_ids)} DocumentIDs for relationships")
     
