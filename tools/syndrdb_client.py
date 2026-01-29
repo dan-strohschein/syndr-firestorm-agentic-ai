@@ -117,23 +117,24 @@ class SyndrDBClient:
                 self.socket.sendall(query_bytes)
                 
                 # Receive response (terminated by newline)
+                # Set socket to non-blocking mode temporarily to prevent infinite hangs
+                self.socket.settimeout(self.timeout)
+                
                 response_data = b''
-                while True:
+                while b'\n' not in response_data:
                     chunk = self.socket.recv(4096)
-                    if not chunk: 
-                        break
+                    if not chunk:
+                        # Connection closed
+                        raise ConnectionResetError("Connection closed while waiting for response")
                     response_data += chunk
-                    
-                    # Check if we have the newline terminator
-                    if b'\n' in response_data:
-                        # Remove terminator and parse
-                        response_data = response_data.split(b'\n')[0]
-                        break
+                
+                # Extract response up to newline
+                response_line = response_data.split(b'\n')[0]
                 
                 latency = time.time() - start_time
                 
                 # Parse JSON response
-                result = json.loads(response_data.decode('utf-8'))
+                result = json.loads(response_line.decode('utf-8'))
                 
                 return {
                     "success":  True,

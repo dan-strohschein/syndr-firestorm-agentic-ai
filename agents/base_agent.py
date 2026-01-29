@@ -115,6 +115,7 @@ class BaseAgent:
         self.logger.info(f"[{self.agent_id}] TXN-{txn_id} EXECUTING: {query}")
         
         result = self.db_client.execute(query)
+        time.sleep(0.10)  # 0.5 second delay between queries
         
         if result.get("success"):
             self.successful_queries += 1
